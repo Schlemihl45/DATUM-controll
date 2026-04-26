@@ -1,0 +1,40 @@
+[project]
+name = "cnc-controller"
+version = "0.1.0"
+description = "Custom LinuxCNC Control Software"
+requires-python = ">=3.11"
+
+dependencies = [
+    "pyside6>=6.7.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "websockets>=13.0",
+    "pydantic>=2.8.0",       # Datenmodelle mit Validierung
+    "pydantic-settings>=2.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-qt>=4.4.0",      # Qt-Widget Tests headless
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.6.0",            # Linter + Formatter
+    "mypy>=1.11.0",           # Statische Typprüfung
+    "pre-commit>=3.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]  # Standard + Import-Sortierung
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true   # linuxcnc hat keine Stubs
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# asyncio_mode nur aktivieren wenn pytest-asyncio installiert ist
