@@ -357,6 +357,21 @@
         <mxCell id="85tlm0w5wXxjR1XmbBq--40" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Sicherheitsrelais" vertex="1">
           <mxGeometry height="60" width="120" x="980" y="930" as="geometry" />
         </mxCell>
+        <mxCell id="85tlm0w5wXxjR1XmbBq--47" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Werkzeuglängensensor" vertex="1">
+          <mxGeometry height="60" width="140" x="1030" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="85tlm0w5wXxjR1XmbBq--48" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="3D Taster" vertex="1">
+          <mxGeometry height="60" width="120" x="800" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="85tlm0w5wXxjR1XmbBq--50" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Pneumatik Ventile" vertex="1">
+          <mxGeometry height="60" width="120" x="1050" y="490" as="geometry" />
+        </mxCell>
+        <mxCell id="85tlm0w5wXxjR1XmbBq--51" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Handrad" vertex="1">
+          <mxGeometry height="60" width="120" x="1190" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="85tlm0w5wXxjR1XmbBq--52" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Spindelkühlung" vertex="1">
+          <mxGeometry height="60" width="120" x="1300" y="360" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
