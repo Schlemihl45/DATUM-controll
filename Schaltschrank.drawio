@@ -372,6 +372,9 @@
         <mxCell id="85tlm0w5wXxjR1XmbBq--52" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Spindelkühlung" vertex="1">
           <mxGeometry height="60" width="120" x="1300" y="360" as="geometry" />
         </mxCell>
+        <mxCell id="85tlm0w5wXxjR1XmbBq--53" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="ATC" vertex="1">
+          <mxGeometry height="60" width="120" x="1380" y="490" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
