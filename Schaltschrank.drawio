@@ -90,14 +90,14 @@
         </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-80" connectable="0" parent="kytypLoYYNPwbAjUM_dN-79" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Bremse" vertex="1">
           <mxGeometry relative="1" x="-0.3078" as="geometry">
-            <mxPoint x="4" y="10" as="offset" />
+            <mxPoint x="160" y="67" as="offset" />
           </mxGeometry>
         </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-89" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="kytypLoYYNPwbAjUM_dN-26">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-20" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="24V Netzteil" vertex="1">
-          <mxGeometry height="60" width="120" x="940" y="450" as="geometry" />
+          <mxGeometry height="60" width="120" x="850" y="560" as="geometry" />
         </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-53" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="kytypLoYYNPwbAjUM_dN-17">
           <mxGeometry relative="1" as="geometry" />
@@ -238,7 +238,7 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-60" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="MCB" vertex="1">
-          <mxGeometry height="60" width="120" x="520" y="640" as="geometry" />
+          <mxGeometry height="60" width="120" x="630" y="560" as="geometry" />
         </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-84" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-68" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;fillColor=#fa6800;strokeColor=#C73500;" target="kytypLoYYNPwbAjUM_dN-8">
           <mxGeometry relative="1" as="geometry">
