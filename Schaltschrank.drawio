@@ -1,6 +1,6 @@
 <mxfile host="app.diagrams.net">
   <diagram name="Seite-1" id="lq5tOCPhden9x9Fs1LPl">
-    <mxGraphModel dx="1042" dy="678" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1152" dy="749" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -298,6 +298,9 @@
         <mxCell id="kytypLoYYNPwbAjUM_dN-95" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Türkontakte" vertex="1">
           <mxGeometry height="60" width="120" x="967" y="750" as="geometry" />
         </mxCell>
+        <mxCell id="PbaZBPUmzML0dyiDccCY-28" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-96" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="PbaZBPUmzML0dyiDccCY-15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
         <mxCell id="kytypLoYYNPwbAjUM_dN-96" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Referenzschalter" vertex="1">
           <mxGeometry height="60" width="120" x="1160" y="200" as="geometry" />
         </mxCell>
@@ -352,8 +355,14 @@
         <mxCell id="85tlm0w5wXxjR1XmbBq--40" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Sicherheitsrelais" vertex="1">
           <mxGeometry height="60" width="120" x="980" y="930" as="geometry" />
         </mxCell>
+        <mxCell id="PbaZBPUmzML0dyiDccCY-30" edge="1" parent="1" source="85tlm0w5wXxjR1XmbBq--47" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="PbaZBPUmzML0dyiDccCY-15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
         <mxCell id="85tlm0w5wXxjR1XmbBq--47" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Werkzeuglängensensor" vertex="1">
           <mxGeometry height="60" width="140" x="1157" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="PbaZBPUmzML0dyiDccCY-31" edge="1" parent="1" source="85tlm0w5wXxjR1XmbBq--48" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="PbaZBPUmzML0dyiDccCY-15">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="85tlm0w5wXxjR1XmbBq--48" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="3D Taster" vertex="1">
           <mxGeometry height="60" width="120" x="1160" y="440" as="geometry" />
@@ -361,26 +370,17 @@
         <mxCell id="85tlm0w5wXxjR1XmbBq--50" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Pneumatik Ventile" vertex="1">
           <mxGeometry height="60" width="120" x="920" y="360" as="geometry" />
         </mxCell>
+        <mxCell id="PbaZBPUmzML0dyiDccCY-29" edge="1" parent="1" source="85tlm0w5wXxjR1XmbBq--51" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="PbaZBPUmzML0dyiDccCY-15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
         <mxCell id="85tlm0w5wXxjR1XmbBq--51" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Handrad" vertex="1">
           <mxGeometry height="60" width="120" x="1160" y="280" as="geometry" />
         </mxCell>
         <mxCell id="85tlm0w5wXxjR1XmbBq--52" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Spindelkühlung" vertex="1">
           <mxGeometry height="60" width="120" x="920" y="440" as="geometry" />
         </mxCell>
-        <mxCell id="PbaZBPUmzML0dyiDccCY-24" edge="1" parent="1" source="PbaZBPUmzML0dyiDccCY-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="85tlm0w5wXxjR1XmbBq--51">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="PbaZBPUmzML0dyiDccCY-25" edge="1" parent="1" source="PbaZBPUmzML0dyiDccCY-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="kytypLoYYNPwbAjUM_dN-96">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="PbaZBPUmzML0dyiDccCY-26" edge="1" parent="1" source="PbaZBPUmzML0dyiDccCY-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="85tlm0w5wXxjR1XmbBq--47">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="PbaZBPUmzML0dyiDccCY-27" edge="1" parent="1" source="PbaZBPUmzML0dyiDccCY-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="85tlm0w5wXxjR1XmbBq--48">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
         <mxCell id="PbaZBPUmzML0dyiDccCY-15" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Beckhoff DI" vertex="1">
-          <mxGeometry height="60" width="120" x="1360" y="280" as="geometry" />
+          <mxGeometry height="60" width="120" x="1370" y="280" as="geometry" />
         </mxCell>
         <mxCell id="PbaZBPUmzML0dyiDccCY-18" edge="1" parent="1" source="PbaZBPUmzML0dyiDccCY-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="kytypLoYYNPwbAjUM_dN-102">
           <mxGeometry relative="1" as="geometry" />
