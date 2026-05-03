@@ -1,6 +1,6 @@
 <mxfile host="app.diagrams.net">
   <diagram name="Seite-1" id="lq5tOCPhden9x9Fs1LPl">
-    <mxGraphModel dx="438" dy="285" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1287" dy="838" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -251,7 +251,8 @@
         <mxCell id="kytypLoYYNPwbAjUM_dN-84" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-68" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;fillColor=#fa6800;strokeColor=#C73500;" target="kytypLoYYNPwbAjUM_dN-8">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="829" y="1010" />
+              <mxPoint x="790" y="970" />
+              <mxPoint x="790" y="1010" />
               <mxPoint x="550" y="1010" />
             </Array>
           </mxGeometry>
@@ -259,7 +260,8 @@
         <mxCell id="kytypLoYYNPwbAjUM_dN-85" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-68" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;fillColor=#fa6800;strokeColor=#C73500;" target="kytypLoYYNPwbAjUM_dN-7">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="829" y="1010" />
+              <mxPoint x="790" y="970" />
+              <mxPoint x="790" y="1010" />
               <mxPoint x="390" y="1010" />
             </Array>
           </mxGeometry>
@@ -267,7 +269,8 @@
         <mxCell id="kytypLoYYNPwbAjUM_dN-86" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-68" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;fillColor=#fa6800;strokeColor=#C73500;" target="kytypLoYYNPwbAjUM_dN-6">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="829" y="1010" />
+              <mxPoint x="790" y="970" />
+              <mxPoint x="790" y="1010" />
               <mxPoint x="230" y="1010" />
             </Array>
           </mxGeometry>
@@ -275,7 +278,8 @@
         <mxCell id="kytypLoYYNPwbAjUM_dN-87" edge="1" parent="1" source="kytypLoYYNPwbAjUM_dN-68" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;fillColor=#fa6800;strokeColor=#C73500;" target="kytypLoYYNPwbAjUM_dN-1">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="829" y="1010" />
+              <mxPoint x="790" y="970" />
+              <mxPoint x="790" y="1010" />
               <mxPoint x="70" y="1010" />
             </Array>
           </mxGeometry>
