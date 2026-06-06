@@ -42,6 +42,7 @@ class ErrorSeverity(Enum):
     WARNING = auto()
     ERROR = auto()
     CRITICAL = auto()
+
 # ---------------------------------------------------------------------------
 # Position
 # ---------------------------------------------------------------------------
@@ -113,8 +114,8 @@ class Tool:
     Represents a tool from the tool bib
 
     """
-    # -- LinuxCNC tool.tbl --
-    number: int  # T-Nummer (T1, T2...)
+    # LinuxCNC tool.tbl
+    number: int  # Tool-Nummer (T1, T2...)
     pocket: int = 0  # P-Nummer
     diameter: float = 0.0  # D
     offset_x: float = 0.0  # X-Offset
@@ -124,7 +125,7 @@ class Tool:
     offset_b: float = 0.0  # B-Offset
     offset_c: float = 0.0  # C-Offset
 
-    # -- custom --
+    # custom
     description: str = ""
     material: str = ""
     corner_type: str = ""
@@ -166,7 +167,7 @@ class Operation:
     gcode_path: str = ""
     tools: list[int] = field(default_factory=list)
     clamping_description: str = ""
-    zero_point_nodes: str = ""
+    zero_point_notes: str = ""
     notes: str = ""
     estimated_time: float = 0.0
     created_at: datetime = field(default_factory=datetime.now)
@@ -201,8 +202,95 @@ class Workpiece:
 
     When created an operation is created automatically.
     """
-    id: int
     name: str
-    gcode_path: str
+    id: int | None = None
+    material: str = ""
+    description: str = ""
+    drawing_number: str = ""
+    operations: list[Operation] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
 
+    @property
+    def operation_count(self) -> int:
+        return len(self.operations)
 
+    @property
+    def is_simple(self) -> bool:
+        return self.operation_count == 1
+
+    @property
+    def is_ready(self) -> bool:
+        return len(self.operations) > 0 and all(op.is_ready for op in self.operations)
+
+    def add_operation(self, operation: Operation) -> None:
+        self.operations.append(operation)
+
+    def remove_operation(self, op_id: int) -> None:
+        self.operations = [op for op in self.operations if op.id != op_id]
+
+    def get_operation(self, op_id: int) -> Operation | None:
+        return next((op for op in self.operations if op.id == op_id), None)
+
+@dataclass
+class Job:
+    """
+    A Production Job: A workpiece gets created n-times
+
+    quantity_total
+    quantity_done
+    current_operation_index
+
+    complete_operation() gets total_ops as a parameter, it never accesses the workpiece
+    """
+
+    workpiece_id: int
+    quantity_total: int
+    id: int | None = None
+    quantity_done: int = 0
+    current_operation_index: int = 0
+    status: JobStatus = JobStatus.PENDING
+    created_at: datetime = field(default_factory=datetime.now)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    def start(self) -> None:
+        if self.status is JobStatus.PENDING:
+            self.status = JobStatus.RUNNING
+            self.started_at = datetime.now()
+
+    def complete_operation(self, total_ops) -> None:
+        if total_ops <= 0:
+            return
+        next_index = self.current_operation_index + 1
+        if next_index >= total_ops:
+            self.quantity_done += 1
+            self.current_operation_index = 0
+            if self.quantity_done >= self.quantity_total:
+                self.status = JobStatus.DONE
+                self.finished_at = datetime.now()
+        else:
+            self.current_operation_index = next_index
+
+    def cancel(self) -> None:
+        if self.status in (JobStatus.PENDING, JobStatus.RUNNING):
+            self.status = JobStatus.CANCELLED
+
+    def fail(self) -> None:
+        self.status = JobStatus.FAILED
+
+    @property
+    def progress(self) -> float:
+        if self.quantity_total <= 0:
+            return 0.0
+        return self.quantity_done / self.quantity_total
+
+    @property
+    def is_done(self) -> bool:
+        return self.status == JobStatus.DONE
+
+    def __repr__(self) -> str:
+        return (
+            f"Job(WP#{self.workpiece_id} "
+            f"{self.quantity_done}/{self.quantity_total} "
+            f"{self.status.name})"
+        )
