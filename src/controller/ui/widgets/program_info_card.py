@@ -64,6 +64,14 @@ class ProgramInfoCard(Card):
         controller.file_changed.connect(self._on_file_changed)
         controller.wcs_changed.connect(self._on_wcs_changed)
 
+    def set_file(self, path: str | None) -> None:
+        """Update the displayed file name.
+
+        Call this from MachinePage._do_load_file() so the card reflects the
+        locally-loaded program before the machine backend has started it.
+        """
+        self._name_label.setText(Path(path).name if path else "No program loaded")
+
     def _on_file_changed(self, path: str) -> None:
         self._name_label.setText(Path(path).name if path else "No program loaded")
 

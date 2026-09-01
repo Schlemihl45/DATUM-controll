@@ -1,26 +1,23 @@
 """
 ui/pages/machine_page.py — Machine page: 3D view + G-code + Start/Stop.
 
-Two top-level view states (QStackedWidget in the viewport area):
+Viewport area:
+  Always shows the DatumSimWidget (or SimPlaceholder). Even when no file is
+  loaded the 3D widget fills the viewport so the window layout stays stable.
 
-  _VIEW_NO_FILE — No program loaded yet.
-      Shows a centred "Datei laden" card-button.
-      Clicking it loads the example G-code file immediately.
-      (Later: navigates to the Workpieces page to pick a file.)
-
-  _VIEW_SIM — A G-code file is loaded.
-      Shows the DatumSimWidget (3D path + ControlHub) or SimPlaceholder.
-      The sim is in SIM mode and can be played back via the ControlHub
-      overlay buttons — no machine state is required for this.
+G-code editor area:
+  A QStackedWidget toggles between:
+    _GCODE_NO_FILE  — centred placeholder with workpieces icon + "Datei laden" button
+    _GCODE_VIEWER   — GCodeViewer with the loaded G-code text
 
 Machine-state rules:
   • Loading a file and viewing it in the 3D sim → always allowed.
-  • controller.run_program() (the "Start" button in the control column)
-    → still requires the machine to be ON, homed, and idle so the real
-    LinuxCNC backend doesn't receive a program command prematurely.
+  • controller.run_program() (the "Start" button) → still requires the machine
+    to be ON, homed, and idle so the real LinuxCNC backend doesn't receive a
+    program command prematurely.
 
-program_state_changed is the single source of truth for the MACHINE vs SIM
-mode transition and for the control button states.
+program_state_changed is the single source of truth for MACHINE vs SIM mode
+and for control-button enabled states.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -38,8 +35,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from PySide6.QtCore import QSize
 
 from controller.core.machine.controller import ErrorSeverity, MachineController, MachineError
 from controller.domain.models import Position, ProgramState
@@ -72,22 +67,23 @@ _LOG_LEVEL = {
     ErrorSeverity.CRITICAL: logging.CRITICAL,
 }
 
-# View-stack indices
-_VIEW_NO_FILE = 0
-_VIEW_SIM     = 1
+# G-code editor stack indices
+_GCODE_NO_FILE = 0
+_GCODE_VIEWER  = 1
 
 # Path to the example G-code file used as the default until a Workpieces page exists
 _REPO_ROOT          = Path(__file__).resolve().parents[4]
 _DEFAULT_GCODE_PATH = _REPO_ROOT / "workpieces" / "Gcode.cnc"
 
 
-# ── No-file placeholder widget ────────────────────────────────────────────────
+# ── No-file placeholder for the G-code editor area ────────────────────────────
 
-class _NoFileWidget(Card):
-    """Shown in the viewport area when no G-code file is loaded.
+class _GCodeNoFileWidget(Card):
+    """Shown in the G-code editor area when no program is loaded.
 
-    Contains a single centred call-to-action button. For now that button
-    loads the example file; later it will navigate to the Workpieces page.
+    Mirrors the workpieces icon aesthetic the user liked; the "Datei laden"
+    button is the primary call-to-action. The 3D viewport is always visible
+    above this regardless of load state.
     """
 
     open_clicked = Signal()
@@ -96,26 +92,26 @@ class _NoFileWidget(Card):
         super().__init__(parent=parent)
 
         inner = QVBoxLayout()
-        inner.setContentsMargins(24, 24, 24, 24)
-        inner.setSpacing(16)
+        inner.setContentsMargins(16, 16, 16, 16)
+        inner.setSpacing(10)
         inner.setAlignment(Qt.AlignCenter)
 
         icon_lbl = QLabel()
-        icon_lbl.setPixmap(get_icon("workpieces", size=QSize(96, 96)).pixmap(96, 96))
+        icon_lbl.setPixmap(get_icon("workpieces", size=QSize(64, 64)).pixmap(64, 64))
         icon_lbl.setAlignment(Qt.AlignCenter)
 
         hint = QLabel("Kein Programm geladen")
         hint.setObjectName("CardTitle")
         hint.setAlignment(Qt.AlignCenter)
 
-        open_btn = CardButton("Datei laden", icon=get_icon("workpieces"), icon_size=48)
-        open_btn.setFixedSize(160, 60)
+        open_btn = CardButton("Datei laden", icon=get_icon("workpieces"), icon_size=36)
+        open_btn.setFixedSize(140, 52)
         open_btn.clicked.connect(self.open_clicked)
 
         inner.addStretch(1)
         inner.addWidget(icon_lbl)
         inner.addWidget(hint)
-        inner.addSpacing(8)
+        inner.addSpacing(6)
         inner.addWidget(open_btn, alignment=Qt.AlignCenter)
         inner.addStretch(1)
 
@@ -138,18 +134,9 @@ class MachinePage(QWidget):
 
         controller.error_occurred.connect(self._on_error)
 
-        # ── Viewport area: no-file card  ↔  sim widget ────────────────────────
-        self._view_stack = QStackedWidget(self)
-
-        self._no_file_widget = _NoFileWidget(self)
-        self._no_file_widget.open_clicked.connect(self._load_example_file)
-        self._view_stack.addWidget(self._no_file_widget)   # _VIEW_NO_FILE
-
+        # ── 3D Viewport: always visible ───────────────────────────────────────
         self._sim = _SimWidget(self)
         self._sim.set_mode("SIM")
-        self._view_stack.addWidget(self._sim)              # _VIEW_SIM
-
-        self._view_stack.setCurrentIndex(_VIEW_NO_FILE)
 
         # ── Info row ──────────────────────────────────────────────────────────
         self._program_info = ProgramInfoCard(controller, self)
@@ -164,7 +151,13 @@ class MachinePage(QWidget):
         # ── Override sliders ──────────────────────────────────────────────────
         self._override_panel = OverridePanel(controller, self)
 
-        # ── G-code viewer ─────────────────────────────────────────────────────
+        # ── G-code editor area: no-file placeholder ↔ GCodeViewer ────────────
+        self._gcode_stack = QStackedWidget(self)
+
+        self._gcode_no_file = _GCodeNoFileWidget(self)
+        self._gcode_no_file.open_clicked.connect(self._load_example_file)
+        self._gcode_stack.addWidget(self._gcode_no_file)   # _GCODE_NO_FILE
+
         self._gcode_view = GCodeViewer(self)
         font = QFont("Consolas")
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -172,6 +165,9 @@ class MachinePage(QWidget):
         self._gcode_view.text_edit.setFont(font)
         self._gcode_view.setContentsMargins(0, 0, 0, 0)
         self._highlighter = GCodeHighlighter(self._gcode_view.text_edit.document())
+        self._gcode_stack.addWidget(self._gcode_view)      # _GCODE_VIEWER
+
+        self._gcode_stack.setCurrentIndex(_GCODE_NO_FILE)
 
         # ── Machine control buttons (right column) ────────────────────────────
         self._start_btn = CardButton("Start", icon=get_icon("start", tint=True), icon_size=64)
@@ -201,17 +197,17 @@ class MachinePage(QWidget):
             controls_col.addWidget(btn)
         controls_col.addStretch(1)
 
-        # ── Bottom row: gcode viewer + control buttons ─────────────────────────
+        # ── Bottom row: gcode stack + control buttons ─────────────────────────
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(12)
-        bottom_row.addWidget(self._gcode_view, stretch=1)
+        bottom_row.addWidget(self._gcode_stack, stretch=1)
         bottom_row.addLayout(controls_col)
 
         # ── Root layout ────────────────────────────────────────────────────────
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
-        root.addWidget(self._view_stack, stretch=2)
+        root.addWidget(self._sim, stretch=2)
         root.addLayout(info_row)
         root.addWidget(self._override_panel)
         root.addLayout(bottom_row, stretch=1)
@@ -248,26 +244,28 @@ class MachinePage(QWidget):
     def _do_load_file(self, path: str) -> None:
         """Load a G-code file into the sim viewer and G-code preview.
 
-        Switches the viewport area to the sim widget and populates the
-        G-code viewer. Does NOT interact with the machine backend.
+        Switches the G-code area to the viewer, populates it, and tells the
+        3D sim to compile and display the program. Does NOT interact with the
+        machine backend — no machine state is required.
         """
         self._loaded_path = path
         self._gcode_view.setPlainText(self._read_gcode_file(path))
+        self._gcode_stack.setCurrentIndex(_GCODE_VIEWER)
+
         self._sim.set_file(path)
-        self._view_stack.setCurrentIndex(_VIEW_SIM)
+
+        # Update the program info card immediately (before the machine starts)
+        self._program_info.set_file(path)
+
         # Re-evaluate button states now that a file is available
         self._sync_ui_state(self._controller.program_state)
 
     # ── UI state sync (single source of truth) ────────────────────────────────
 
     def _sync_ui_state(self, state: ProgramState) -> None:
-        """Sync sim mode + button enabled states to the current program state.
-
-        Called on every program_state_changed signal and after file load.
-        """
+        """Sync sim mode + button enabled states to the current program state."""
         now_running = state == ProgramState.RUNNING
 
-        # Switch sim between live-follow mode and playback mode
         self._sim.set_mode("MACHINE" if now_running else "SIM")
         if now_running:
             pos = self._controller.position

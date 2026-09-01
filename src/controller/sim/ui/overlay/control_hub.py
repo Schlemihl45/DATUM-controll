@@ -1,13 +1,16 @@
 """
 sim/ui/overlay/control_hub.py — Floating playback-control bar.
 
-Overlaid at the bottom-center of DatumSimWidget. Contains:
-  • Skip-backward / play-pause / skip-forward / stop buttons
-  • Speed slider with a floating value label above the handle
-  • Info row: WCS label | G-code line (syntax-highlighted) | tool label | feedrate
+Overlaid at the bottom-centre of DatumSimWidget. Paints its own dark
+rounded background so it is always legible regardless of what the
+OpenGL viewport renders behind it.
 
-In MACHINE mode the playback buttons are hidden — the real machine drives
-the display and simulation controls would conflict with it.
+Speed slider — bidirectional:
+  • Centre (value = 0)   → paused / frozen at current position
+  • +100 (default snap)  → +1× real-time forward
+  • Right of centre      → faster forward (up to +20×)
+  • Left of centre       → faster reverse (down to −10×)
+  • Snaps: 0 (±30) and 100 (±20)
 """
 from __future__ import annotations
 
@@ -15,7 +18,9 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QPoint, QSize, Signal
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import (
+    QBrush, QColor, QFont, QIcon, QPainter, QPen,
+)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -29,22 +34,31 @@ from PySide6.QtWidgets import (
 
 from controller.sim.core.settings import AppSettings
 
-# Icons shipped with this package
+# Resolve icon directory relative to this file
 _ICONS_DIR = Path(__file__).resolve().parents[3] / "assets" / "icons"
 
-# Lookup from WCS index → G-word name
+# WCS index → G-word label
 _WCS_NAMES = {
     1: "G54", 2: "G55", 3: "G56", 4: "G57", 5: "G58",
     6: "G59", 7: "G59.1", 8: "G59.2", 9: "G59.3",
 }
 
-# ── Shared widget styles (self-contained; intentionally not in .qss so the
-#    overlay keeps its dark look regardless of the host app theme) ─────────────
+# Speed slider range and snap constants
+_SPEED_MIN      = -1000   # −10× reverse
+_SPEED_MAX      = +2000   # +20× forward
+_SPEED_DEFAULT  =  +100   # +1× real-time
+_SNAP_ZERO_R    =   30    # snap to 0 within ±30
+_SNAP_ONE_LOW   =   80    # snap to 100 if value in [80, 150]
+_SNAP_ONE_HIGH  =  150
+
+# ── Per-widget inline styles (dark overlay aesthetic) ─────────────────────────
+# These are intentionally self-contained so the overlay looks the same
+# regardless of which app-level QSS theme is active.
 
 _LABEL_STYLE = """
 QLabel {
-    background: rgba(24, 24, 26, 200);
-    border: 1px solid rgba(255, 255, 255, 12%);
+    background: rgba(24, 24, 26, 180);
+    border: 1px solid rgba(255, 255, 255, 10%);
     border-radius: 6px;
     color: #E2E8F0;
     padding-left: 8px;
@@ -78,25 +92,49 @@ QSlider::groove:horizontal {
     border-radius: 2px;
 }
 QSlider::sub-page:horizontal {
-    background: #E2E8F0;
+    background: rgba(226, 232, 240, 120);
+    border-radius: 2px;
+}
+QSlider::add-page:horizontal {
+    background: rgba(255, 255, 255, 15%);
     border-radius: 2px;
 }
 QSlider::handle:horizontal {
     background: #E2E8F0;
-    width: 12px; height: 12px;
-    margin-top: -4px; margin-bottom: -4px;
-    border-radius: 6px;
+    width: 14px; height: 14px;
+    margin-top: -5px; margin-bottom: -5px;
+    border-radius: 7px;
 }
 QSlider::handle:horizontal:hover { background: #FFFFFF; }
 """
 
 
-# ── Helper widgets ────────────────────────────────────────────────────────────
+# ── Helper: load SVG icon with explicit colour rendering ─────────────────────
+
+def _svg_icon(name: str, size: int = 24) -> QIcon:
+    """Load an SVG from the assets/icons/ directory and render it to a QIcon.
+
+    Uses QSvgRenderer → QPixmap so the embedded stroke/fill colours in the
+    SVG are respected regardless of the platform icon theme.
+    """
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtSvg import QSvgRenderer
+
+    path = _ICONS_DIR / name
+    renderer = QSvgRenderer(str(path))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
+
+
+# ── GCode syntax-highlighted label ────────────────────────────────────────────
 
 class GCodeLine(QLabel):
     """Expandable label that syntax-highlights a G-code fragment."""
 
-    # Letter → color for syntax coloring
     _COLORS = {
         "G": "#E06C75", "M": "#E06C75",
         "F": "#E5C07B", "S": "#C678DD",
@@ -104,14 +142,13 @@ class GCodeLine(QLabel):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         font = QFont("Consolas", 12)
-        font.setStyleHint(QFont.Monospace)
+        font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
 
     def set_gcode(self, raw_text: str) -> None:
-        """Apply per-letter syntax coloring via inline HTML spans."""
         def _replace(m: re.Match) -> str:
             letter = m.group(1).upper()
             color  = self._COLORS.get(letter, "#E0E0E0")
@@ -122,20 +159,27 @@ class GCodeLine(QLabel):
         self.setText(text)
 
 
+# ── Bidirectional speed slider ────────────────────────────────────────────────
+
 class SpeedSlider(QSlider):
-    """Horizontal speed slider that shows a floating label above the handle while dragging."""
+    """Horizontal speed slider with centre = 0, popup label while dragging.
+
+    Range: _SPEED_MIN to _SPEED_MAX (symmetric around 0 in appearance).
+    Centre position (value 0) = frozen / paused position.
+    Positive = forward playback, negative = reverse.
+    Snaps to 0 (±30 ticks) and to +100 / 1× (±20 ticks of 100).
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(Qt.Horizontal, parent)
+        super().__init__(Qt.Orientation.Horizontal, parent)
 
-        # Qt.ToolTip flag prevents the label being clipped by the slider boundary
-        self._popup = QLabel(self, Qt.ToolTip)
-        self._popup.setAlignment(Qt.AlignCenter)
+        self._popup = QLabel(self, Qt.WindowType.ToolTip)
+        self._popup.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._popup.setStyleSheet("""
             QLabel {
                 background: rgba(30, 30, 30, 230);
                 color: #E2E8F0;
-                border: 1px solid rgba(255, 255, 255, 20%);
+                border: 1px solid rgba(255,255,255,20%);
                 border-radius: 4px;
                 padding: 4px 8px;
                 font-family: Consolas;
@@ -143,11 +187,6 @@ class SpeedSlider(QSlider):
             }
         """)
         self._popup.hide()
-
-        # Snap zone: values within ±10/+50 of 100 snap to 100 (1×)
-        self._snap_target          = 100
-        self._snap_threshold_neg   = 10
-        self._snap_threshold_pos   = 50
 
         self.sliderPressed.connect(self._on_pressed)
         self.sliderReleased.connect(self._popup.hide)
@@ -158,56 +197,72 @@ class SpeedSlider(QSlider):
         self._popup.show()
 
     def _on_value_changed(self, val: int) -> None:
-        lower = self._snap_target - self._snap_threshold_neg
-        upper = self._snap_target + self._snap_threshold_pos
-        if lower <= val <= upper and val != self._snap_target:
-            self.setValue(self._snap_target)
+        # Snap to 0
+        if -_SNAP_ZERO_R <= val <= _SNAP_ZERO_R and val != 0:
+            self.setValue(0)
             return
+        # Snap to +100 (1× real-time)
+        if _SNAP_ONE_LOW <= val <= _SNAP_ONE_HIGH and val != 100:
+            self.setValue(100)
+            return
+
         if self._popup.isVisible():
             self._update_popup()
 
     def _update_popup(self) -> None:
-        speed = self.value() / 100.0
-        self._popup.setText(f"{speed:.2f}×")
+        val   = self.value()
+        speed = val / 100.0
+        if val == 0:
+            label = "0× — pausiert"
+        elif val > 0:
+            label = f"+{speed:.1f}×"
+        else:
+            label = f"{speed:.1f}× ↩"
+        self._popup.setText(label)
         self._popup.adjustSize()
 
-        opt_min = self.minimum()
-        opt_max = self.maximum()
-        span    = opt_max - opt_min
-        hx      = self.width() // 2 if span == 0 else (
-            6 + int((self.value() - opt_min) / span * (self.width() - 12))
-        )
+        span  = self.maximum() - self.minimum()
+        ratio = (val - self.minimum()) / span if span else 0.5
+        hx    = int(6 + ratio * (self.width() - 12))
 
-        global_pos = self.mapToGlobal(QPoint(hx, 0))
+        gp    = self.mapToGlobal(QPoint(hx, 0))
         self._popup.move(
-            global_pos.x() - self._popup.width() // 2,
-            global_pos.y() - self._popup.height() - 6,
+            gp.x() - self._popup.width() // 2,
+            gp.y() - self._popup.height() - 6,
         )
 
 
 # ── ControlHub ────────────────────────────────────────────────────────────────
 
 class ControlHub(QWidget):
-    """Bottom-center floating playback and info bar for DatumSimWidget."""
+    """Bottom-centre floating playback and info bar for DatumSimWidget.
+
+    Paints its own rounded dark background so icons are legible over the
+    OpenGL viewport without needing WA_TranslucentBackground on the parent.
+    """
 
     play_clicked          = Signal()
     pause_clicked         = Signal()
     stop_clicked          = Signal()
     skip_forward_clicked  = Signal()
     skip_backward_clicked = Signal()
-    speed_changed         = Signal(float)   # 0.0 … 20.0
+    speed_changed         = Signal(float)   # −10.0 … +20.0
+
+    _BG_COLOR = QColor(18, 18, 20, 215)
+    _BORDER   = QColor(255, 255, 255, 22)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(500, 100)
-        self._state = 0    # 0=stopped/paused, 1=playing
+        self.setFixedSize(520, 105)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._state = 0    # 0 = stopped/paused icon, 1 = playing icon
         self._s     = AppSettings.instance()
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(12, 12, 12, 10)
         root.setSpacing(8)
 
-        # ── Playback controls row ──────────────────────────────────────────────
+        # ── Playback control row ───────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
 
@@ -216,10 +271,10 @@ class ControlHub(QWidget):
         self.btn_skip_forward  = QPushButton(self)
         self.btn_stop          = QPushButton(self)
 
-        self.btn_play_pause.setIcon(   QIcon(str(_ICONS_DIR / "player-play.svg")))
-        self.btn_stop.setIcon(         QIcon(str(_ICONS_DIR / "player-stop.svg")))
-        self.btn_skip_backward.setIcon(QIcon(str(_ICONS_DIR / "player-skip-back.svg")))
-        self.btn_skip_forward.setIcon( QIcon(str(_ICONS_DIR / "player-skip-forward.svg")))
+        self.btn_play_pause.setIcon(   _svg_icon("player-play.svg"))
+        self.btn_stop.setIcon(         _svg_icon("player-stop.svg"))
+        self.btn_skip_backward.setIcon(_svg_icon("player-skip-back.svg"))
+        self.btn_skip_forward.setIcon( _svg_icon("player-skip-forward.svg"))
 
         for btn in (self.btn_skip_backward, self.btn_play_pause,
                     self.btn_skip_forward, self.btn_stop):
@@ -230,10 +285,11 @@ class ControlHub(QWidget):
 
         btn_row.addStretch()
 
+        # Speed slider (bidirectional)
         self.slider_speed = SpeedSlider(self)
-        self.slider_speed.setRange(0, 2000)
-        self.slider_speed.setValue(100)
-        self.slider_speed.setFixedWidth(250)
+        self.slider_speed.setRange(_SPEED_MIN, _SPEED_MAX)
+        self.slider_speed.setValue(_SPEED_DEFAULT)
+        self.slider_speed.setFixedWidth(240)
         self.slider_speed.setStyleSheet(_SPEED_SLIDER_STYLE)
         btn_row.addWidget(self.slider_speed)
         btn_row.addStretch()
@@ -243,32 +299,32 @@ class ControlHub(QWidget):
         info_row = QHBoxLayout()
         info_row.setSpacing(6)
 
-        # WCS label (G54 …)
         self._datum_lbl = QLabel("G54", self)
         self._datum_lbl.setFixedWidth(54)
-        self._datum_lbl.setAlignment(Qt.AlignCenter)
+        self._datum_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._datum_lbl.setStyleSheet(_LABEL_STYLE)
 
-        # G-code line (expandable) or invisible spacer
-        self._gcode_line    = GCodeLine(self)
+        self._gcode_line   = GCodeLine(self)
         self._gcode_line.setStyleSheet(_LABEL_STYLE)
-        self._gcode_spacer  = QWidget(self)
-        self._gcode_spacer.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self._gcode_stack   = QStackedWidget(self)
-        self._gcode_stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self._gcode_stack.addWidget(self._gcode_line)    # index 0
-        self._gcode_stack.addWidget(self._gcode_spacer)  # index 1
+        self._gcode_spacer = QWidget(self)
+        self._gcode_spacer.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
+        self._gcode_stack = QStackedWidget(self)
+        self._gcode_stack.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+        )
+        self._gcode_stack.addWidget(self._gcode_line)    # 0
+        self._gcode_stack.addWidget(self._gcode_spacer)  # 1
 
-        # Tool number label
         self._tool_lbl = QLabel("T1", self)
         self._tool_lbl.setFixedWidth(40)
-        self._tool_lbl.setAlignment(Qt.AlignCenter)
+        self._tool_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._tool_lbl.setStyleSheet(_LABEL_STYLE)
 
-        # Feedrate label
         self._feed_lbl = QLabel("F  0", self)
         self._feed_lbl.setFixedWidth(90)
-        self._feed_lbl.setAlignment(Qt.AlignCenter)
+        self._feed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._feed_lbl.setStyleSheet(_LABEL_STYLE)
 
         info_row.addWidget(self._datum_lbl)
@@ -296,6 +352,16 @@ class ControlHub(QWidget):
         self._s.show_datum_changed.connect(self._datum_lbl.setVisible)
         self._s.show_tool_changed.connect(self._tool_lbl.setVisible)
         self._s.show_feedrate_changed.connect(self._feed_lbl.setVisible)
+
+    # ── Background painting ───────────────────────────────────────────────────
+
+    def paintEvent(self, event) -> None:
+        """Draw the dark rounded background behind all child widgets."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QBrush(self._BG_COLOR))
+        painter.setPen(QPen(self._BORDER, 1))
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
 
     # ── Visibility ────────────────────────────────────────────────────────────
 
@@ -329,32 +395,28 @@ class ControlHub(QWidget):
 
     def _play_pause_clicked(self) -> None:
         if self._state == 0:
-            self.btn_play_pause.setIcon(QIcon(str(_ICONS_DIR / "player-pause.svg")))
+            self.btn_play_pause.setIcon(_svg_icon("player-pause.svg"))
             self._state = 1
             self.play_clicked.emit()
         else:
-            self.btn_play_pause.setIcon(QIcon(str(_ICONS_DIR / "player-play.svg")))
+            self.btn_play_pause.setIcon(_svg_icon("player-play.svg"))
             self._state = 0
             self.pause_clicked.emit()
 
     def _stop_clicked(self) -> None:
-        self.btn_play_pause.setIcon(QIcon(str(_ICONS_DIR / "player-play.svg")))
+        self.btn_play_pause.setIcon(_svg_icon("player-play.svg"))
         self._state = 0
         self.stop_clicked.emit()
 
     def reset_play_state(self) -> None:
-        """Reset the play/pause button to the 'stopped' icon."""
-        self.btn_play_pause.setIcon(QIcon(str(_ICONS_DIR / "player-play.svg")))
+        """Reset play/pause button to the stopped icon."""
+        self.btn_play_pause.setIcon(_svg_icon("player-play.svg"))
         self._state = 0
 
     # ── Mode ──────────────────────────────────────────────────────────────────
 
     def set_mode(self, mode: str) -> None:
-        """Show/hide sim controls based on SIM vs. MACHINE mode.
-
-        In MACHINE mode playback buttons are hidden — the real controller drives
-        the tool position, so simulation controls would be meaningless.
-        """
+        """Hide/show sim controls in MACHINE mode (controller drives position)."""
         assert mode in ("SIM", "MACHINE")
         show = (mode == "SIM")
         for w in (self.btn_skip_backward, self.btn_play_pause,

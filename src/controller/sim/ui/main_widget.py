@@ -213,7 +213,7 @@ class DatumSimWidget(QWidget):
 
             pos, line, s = self._player.tick()
 
-            if self._player.is_finished:
+            if self._player.is_finished or self._player.is_at_start:
                 self._on_sim_finished()
 
             self._check_tool_change(line)
