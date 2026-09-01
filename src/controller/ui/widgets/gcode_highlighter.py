@@ -10,7 +10,7 @@ inside parentheses or after a semicolon.
 from __future__ import annotations
 
 from PySide6.QtCore import QRegularExpression
-from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextDocument
+from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextDocument
 
 
 class GCodeHighlighter(QSyntaxHighlighter):

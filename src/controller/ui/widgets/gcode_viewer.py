@@ -7,9 +7,9 @@ otherwise a plain rectangular overlay squares off the corner.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QPainter, QLinearGradient, QColor, QPainterPath
-from PySide6.QtWidgets import QWidget, QPlainTextEdit, QScroller
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
+from PySide6.QtWidgets import QPlainTextEdit, QScroller, QWidget
 
 _RADIUS = 8  # muss zum border-radius von QPlainTextEdit#GCodeView passen
 

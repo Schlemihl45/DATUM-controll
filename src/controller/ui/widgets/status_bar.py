@@ -12,10 +12,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from src.controller.core.machine.controller import MachineController
-from src.controller.domain.models import ErrorSeverity, MachineError
+from controller.core.machine.controller import MachineController
+from controller.domain.models import ErrorSeverity, MachineError
 
 _SEVERITY_PROPERTY_VALUES = {
     ErrorSeverity.INFO: "info",

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from src.controller.core.backends.base import AbstractBackend
-from src.controller.domain.models import (
+from controller.core.backends.base import AbstractBackend
+from controller.domain.models import (
+    AxisLoads,
     ErrorSeverity,
     FeedData,
     MachineError,
     MachineState,
     Position,
     ProgramState,
-    AxisLoads,
 )
 
 
@@ -136,8 +136,19 @@ class MachineController(QObject):
         """Stop the poll loop. Call before the application exits."""
         self._timer.stop()
 
+    def poll_once(self) -> None:
+        """
+        Run a single poll cycle synchronously, without the QTimer.
+
+        Production code should always go through start()/the timer —
+        this exists so tests can deterministically advance controller
+        state (backend.set_machine_on(); controller.poll_once(); ...)
+        without depending on wall-clock timing.
+        """
+        self._poll()
+
     # ------------------------------------------------------------------
-    # Poll loop (private — only called by QTimer)
+    # Poll loop (private — only called by QTimer, or poll_once() above)
     # ------------------------------------------------------------------
 
     def _poll(self) -> None:

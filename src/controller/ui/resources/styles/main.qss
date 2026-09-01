@@ -25,6 +25,12 @@ QFrame#Card {
 }
 
 
+QLabel#CardTitle {
+    color: #8CA9C7;
+    font-size: 12px;
+    font-weight: 600;
+}
+
 /* Card Button */
 QLabel#CardButtonLabel {
     color: #E7EBF0;
