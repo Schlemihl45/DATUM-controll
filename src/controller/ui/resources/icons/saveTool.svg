@@ -1,0 +1,22 @@
+<svg width="124" height="124" viewBox="0 0 124 124" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="path-1-inside-1_2033_373" fill="white">
+<rect x="19" y="8" width="37" height="38" rx="3"/>
+</mask>
+<rect x="19" y="8" width="37" height="38" rx="3" stroke="#E6E6E6" stroke-width="10" mask="url(#path-1-inside-1_2033_373)"/>
+<mask id="path-2-inside-2_2033_373" fill="white">
+<rect x="19" y="53" width="37" height="19" rx="2"/>
+</mask>
+<rect x="19" y="53" width="37" height="19" rx="2" stroke="#E6E6E6" stroke-width="8" mask="url(#path-2-inside-2_2033_373)"/>
+<line x1="26" y1="46" x2="26" y2="53" stroke="#E6E6E6" stroke-width="4"/>
+<line x1="50" y1="46" x2="50" y2="53" stroke="#E6E6E6" stroke-width="4"/>
+<mask id="path-5-inside-3_2033_373" fill="white">
+<rect x="27" y="69" width="21" height="35" rx="0.5"/>
+</mask>
+<rect x="27" y="69" width="21" height="35" rx="0.5" stroke="#E6E6E6" stroke-width="6" mask="url(#path-5-inside-3_2033_373)"/>
+<line y1="-1" x2="19.8297" y2="-1" transform="matrix(0.769653 -0.638463 0.647101 0.762405 30.8589 102.35)" stroke="#E6E6E6" stroke-width="2"/>
+<line y1="-1" x2="21.195" y2="-1" transform="matrix(0.769653 -0.638463 0.647101 0.762405 29.8293 93.5322)" stroke="#E6E6E6" stroke-width="2"/>
+<line y1="-1" x2="19.4287" y2="-1" transform="matrix(0.769653 -0.638463 0.647101 0.762405 29.8293 84.2208)" stroke="#E6E6E6" stroke-width="2"/>
+<path d="M67.3333 73H94L104.667 83.6667V110.333C104.667 111.748 104.105 113.104 103.105 114.105C102.104 115.105 100.748 115.667 99.3333 115.667H67.3333C65.9188 115.667 64.5623 115.105 63.5621 114.105C62.5619 113.104 62 111.748 62 110.333V78.3333C62 76.9188 62.5619 75.5623 63.5621 74.5621C64.5623 73.5619 65.9188 73 67.3333 73Z" stroke="#E6E6E6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M78 99.6666C78 101.081 78.5619 102.438 79.5621 103.438C80.5623 104.438 81.9188 105 83.3333 105C84.7478 105 86.1044 104.438 87.1046 103.438C88.1048 102.438 88.6667 101.081 88.6667 99.6666C88.6667 98.2522 88.1048 96.8956 87.1046 95.8954C86.1044 94.8952 84.7478 94.3333 83.3333 94.3333C81.9188 94.3333 80.5623 94.8952 79.5621 95.8954C78.5619 96.8956 78 98.2522 78 99.6666Z" stroke="#E6E6E6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M88.6666 73V83.6667H72.6666V73" stroke="#E6E6E6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

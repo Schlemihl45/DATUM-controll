@@ -42,7 +42,26 @@ class ErrorSeverity(Enum):
     WARNING = auto()
     ERROR = auto()
     CRITICAL = auto()
+# ---------------------------------------------------------------------------
+# Load Values
+# ---------------------------------------------------------------------------
+@dataclass
+class Load:
+    """
+    Generic load reading — both percentage (relative to rated
+    capacity) and raw torque, wherever the source (VFD, servo drive)
+    provides both. Which field is relevant is decided per use case,
+    not here.
+    """
+    percent: float = 0.0       # 0-100, bezogen auf Nennlast
+    torque_nm: float = 0.0     # 0.0, falls die Quelle kein Drehmoment liefert
 
+@dataclass
+class AxisLoads:
+    """Per-Achse-Lastmomentaufnahme, ein Load je Linearachse."""
+    x: Load = field(default_factory=Load)
+    y: Load = field(default_factory=Load)
+    z: Load = field(default_factory=Load)
 # ---------------------------------------------------------------------------
 # Position
 # ---------------------------------------------------------------------------
@@ -88,6 +107,7 @@ class FeedData:
     feed_actual: float = 0.0
     spindle_rpm: float = 0.0
     feed_override: float = 1.0
+    spindle_load: Load = field(default_factory=Load)
 
     def feed_override_percent(self) -> int:
         return round(self.feed_override * 100)

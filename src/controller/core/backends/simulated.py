@@ -3,15 +3,17 @@ from __future__ import annotations
 import math
 import time
 
-from domain.models import (
+from src.controller.domain.models import (
     ErrorSeverity,
     FeedData,
     MachineError,
     MachineState,
     Position,
     ProgramState,
+    AxisLoads,
+    Load,
 )
-from core.backends.base import AbstractBackend
+from src.controller.core.backends.base import AbstractBackend
 
 
 class SimulatedBackend(AbstractBackend):
@@ -31,8 +33,11 @@ class SimulatedBackend(AbstractBackend):
     """
 
     _PROGRAM_DURATION: float = 30.0  # seconds for a simulated program run
+    _MAX_SPINDLE_TORQUE_NM: float = 8.0
+    _MAX_AXIS_TORQUE_NM: float = 3.0
 
     def __init__(self) -> None:
+
         # --- Machine state ---
         self._machine_state: MachineState = MachineState.ESTOP
         self._program_state: ProgramState = ProgramState.IDLE
@@ -47,6 +52,7 @@ class SimulatedBackend(AbstractBackend):
         self._feed_override: float = 1.0
         self._rapid_override: float = 1.0
         self._max_velocity: float = 100.0    # mm/s (runtime cap)
+        self._axis_loads: AxisLoads = AxisLoads()
 
         # --- Spindle ---
         self._spindle_rpm: float = 0.0
@@ -74,6 +80,7 @@ class SimulatedBackend(AbstractBackend):
         self._optional_stop: bool = False
         self._block_delete: bool = False
         self._feed_hold: bool = False
+        self._single_block: bool = False
 
         # --- Error channel ---
         self._pending_error: MachineError | None = None
@@ -94,27 +101,72 @@ class SimulatedBackend(AbstractBackend):
 
         self._poll_spindle()
 
+    def _simulated_load(self, base: float, amplitude: float, freq: float, t: float, phase: float = 0.0) -> Load:
+        """Oszillierende Last: base ± amplitude, nie dauerhaft am Anschlag,
+        solange amplitude + base < 100 gewählt wird."""
+        percent = base + amplitude * abs(math.sin(t * freq + phase))
+        percent = max(0.0, min(percent, 100.0))
+        return Load(
+            percent=round(percent, 1),
+            torque_nm=round(percent / 100.0 * self._MAX_AXIS_TORQUE_NM, 3),
+        )
+
     def _poll_running(self, t: float) -> None:
+        if self._single_block:
+            self._poll_running_single_block(t)
+            return
+
         elapsed = time.monotonic() - self._program_start_time
         progress = min(elapsed / self._PROGRAM_DURATION, 1.0)
         self._current_line = int(progress * 200)
 
-        # Lissajous-like path — gives believable numbers in the UI
         self._position = Position(
             x=round(math.sin(t * 0.5) * 40.0, 3),
             y=round(math.cos(t * 0.3) * 25.0, 3),
             z=round(-5.0 + math.sin(t * 1.2) * 2.0, 3),
         )
         self._distance_to_go = round(abs(math.sin(t * 2.0)) * 15.0, 3)
+        self._axis_loads = AxisLoads(
+            x=self._simulated_load(base=25.0, amplitude=35.0, freq=1.3, t=t),
+            y=self._simulated_load(base=20.0, amplitude=30.0, freq=0.9, t=t, phase=1.0),
+            z=self._simulated_load(base=15.0, amplitude=45.0, freq=2.1, t=t, phase=2.3),
+        )
 
         if progress >= 1.0:
             self._program_state = ProgramState.IDLE
             self._current_line = 0
             self._loaded_file = ""
             self._distance_to_go = 0.0
+            self._axis_loads = AxisLoads()
+
+    def _poll_running_single_block(self, t: float) -> None:
+        """Im Einzelsatz-Modus: genau EINE Zeile pro Resume, unabhängig
+        davon, wie lange pausiert wurde — kein Zeit-basierter Fortschritt."""
+        self._current_line += 1
+        progress = min(self._current_line / 200, 1.0)
+
+        self._position = Position(
+            x=round(math.sin(t * 0.5) * 40.0, 3),
+            y=round(math.cos(t * 0.3) * 25.0, 3),
+            z=round(-5.0 + math.sin(t * 1.2) * 2.0, 3),
+        )
+        self._distance_to_go = round(abs(math.sin(t * 2.0)) * 15.0, 3)
+        self._axis_loads = AxisLoads(
+            x=self._simulated_load(base=25.0, amplitude=35.0, freq=1.3, t=t),
+            y=self._simulated_load(base=20.0, amplitude=30.0, freq=0.9, t=t, phase=1.0),
+            z=self._simulated_load(base=15.0, amplitude=45.0, freq=2.1, t=t, phase=2.3),
+        )
+
+        self._program_state = ProgramState.PAUSED
+
+        if progress >= 1.0:
+            self._program_state = ProgramState.IDLE
+            self._current_line = 0
+            self._loaded_file = ""
+            self._distance_to_go = 0.0
+            self._axis_loads = AxisLoads()
 
     def _poll_spindle(self) -> None:
-        """Exponentially approach target RPM (simulated ramp-up/down)."""
         if self._spindle_brake:
             self._spindle_rpm = max(0.0, round(self._spindle_rpm * 0.5, 1))
             return
@@ -123,7 +175,33 @@ class SimulatedBackend(AbstractBackend):
             self._spindle_rpm = round(self._spindle_rpm + diff * 0.1, 1)
         else:
             self._spindle_rpm = max(0.0, round(self._spindle_rpm * 0.85, 1))
+            if self._spindle_rpm < 1.0:  # <-- neu: Schwellenwert statt exaktem 0-Vergleich
+                self._spindle_rpm = 0.0
 
+    def set_single_block(self, enabled: bool) -> None:
+        if self._single_block and not enabled:
+            # Umschalten von Single-Block zurück auf Zeit-basiert:
+            # program_start_time so setzen, dass sie zur aktuell erreichten
+            # Zeile passt, sonst springt der nächste Tick wild.
+            progress_at_current_line = self._current_line / 200
+            elapsed_equivalent = progress_at_current_line * self._PROGRAM_DURATION
+            self._program_start_time = time.monotonic() - elapsed_equivalent
+        self._single_block = enabled
+
+    def get_single_block(self) -> bool:
+        return self._single_block
+
+    def rewind_program(self) -> None:
+        """Reset to program start without unloading. No-op if nothing
+        is loaded."""
+        if not self._loaded_file:
+            return
+        self._program_state = ProgramState.IDLE
+        self._current_line = 0
+        self._distance_to_go = 0.0
+        self._feed_hold = False
+        self._spindle_target_rpm = 0.0
+        self._axis_loads = AxisLoads()
     # ------------------------------------------------------------------
     # Machine state reads
     # ------------------------------------------------------------------
@@ -163,6 +241,7 @@ class SimulatedBackend(AbstractBackend):
     def get_feed_hold(self) -> bool:
         return self._feed_hold
 
+
     # ------------------------------------------------------------------
     # Position / WCS reads
     # ------------------------------------------------------------------
@@ -179,15 +258,29 @@ class SimulatedBackend(AbstractBackend):
     # ------------------------------------------------------------------
     # Feed / spindle reads
     # ------------------------------------------------------------------
+    def get_axis_loads(self) -> AxisLoads:
+        return self._axis_loads
 
     def get_feed_data(self) -> FeedData:
         feed_actual = 0.0
         if self._program_state == ProgramState.RUNNING and not self._feed_hold:
             feed_actual = round(abs(math.sin(time.monotonic() - self._t0)) * 800, 1)
+
+        t = time.monotonic() - self._t0
+        base_load = min(self._spindle_rpm / 12000.0 * 70.0, 70.0)  # RPM-abhängiger Sockel
+        wobble = 15.0 * abs(math.sin(t * 1.7))  # Schwankung obendrauf
+        spindle_load_percent = min(base_load + wobble, 100.0) if self._spindle_rpm > 0 else 0.0
+
+        spindle_load = Load(
+            percent=round(spindle_load_percent, 1),
+            torque_nm=round(spindle_load_percent / 100.0 * self._MAX_SPINDLE_TORQUE_NM, 3),
+        )
+
         return FeedData(
             feed_actual=feed_actual,
             spindle_rpm=self._spindle_rpm,
             feed_override=self._feed_override,
+            spindle_load=spindle_load,
         )
 
     def get_rapid_override(self) -> float:
@@ -272,18 +365,7 @@ class SimulatedBackend(AbstractBackend):
         self._program_start_time = time.monotonic()
         self._t0 = time.monotonic()
         self._feed_hold = False
-
-    def pause_program(self) -> None:
-        if self._program_state == ProgramState.RUNNING:
-            self._program_state = ProgramState.PAUSED
-
-    def resume_program(self) -> None:
-        if self._program_state == ProgramState.PAUSED:
-            # Shift start time so progress does not jump
-            elapsed = time.monotonic() - self._program_start_time
-            self._program_start_time = time.monotonic() - elapsed
-            self._program_state = ProgramState.RUNNING
-            self._feed_hold = False
+        self._spindle_target_rpm = 8000.0  # <-- neu: Simulation "schaltet Spindel ein"
 
     def stop_program(self) -> None:
         if self._program_state in (ProgramState.RUNNING, ProgramState.PAUSED):
@@ -292,15 +374,33 @@ class SimulatedBackend(AbstractBackend):
             self._loaded_file = ""
             self._distance_to_go = 0.0
             self._feed_hold = False
+            self._spindle_target_rpm = 0.0  # <-- neu: Spindel simuliert "abschalten"
+            self._axis_loads = AxisLoads()
+
+    def pause_program(self) -> None:
+        if self._program_state == ProgramState.RUNNING:
+            self._program_state = ProgramState.PAUSED
+
+    def resume_program(self) -> None:
+        if self._program_state == ProgramState.PAUSED:
+            if self._single_block:
+                self._program_state = ProgramState.RUNNING  # feuert EINMAL _poll_running_single_block, pausiert sofort wieder
+                self._spindle_target_rpm = 25000.0  # Tippfehler von vorhin — auf 8000.0 korrigieren
+                return
+            elapsed = time.monotonic() - self._program_start_time
+            self._program_start_time = time.monotonic() - elapsed
+            self._program_state = ProgramState.RUNNING
+            self._feed_hold = False
+            self._spindle_target_rpm = 8000.0
 
     def auto_step(self) -> None:
-        """Advance program by one line then pause (single-step mode)."""
-        if self._program_state == ProgramState.PAUSED and self._loaded_file:
-            self._current_line += 1
-            # Stay paused — caller must call auto_step() again for next line
-        elif self._program_state == ProgramState.IDLE and self._loaded_file:
-            self._program_state = ProgramState.PAUSED
-            self._current_line = 1
+            """Advance program by one line then pause (single-step mode)."""
+            if self._program_state == ProgramState.PAUSED and self._loaded_file:
+                self._current_line += 1
+                # Stay paused — caller must call auto_step() again for next line
+            elif self._program_state == ProgramState.IDLE and self._loaded_file:
+                self._program_state = ProgramState.PAUSED
+                self._current_line = 1
 
     # ------------------------------------------------------------------
     # Interpreter commands
@@ -324,6 +424,8 @@ class SimulatedBackend(AbstractBackend):
         self._loaded_file = ""
         self._distance_to_go = 0.0
         self._feed_hold = False
+        self._spindle_target_rpm = 0.0  # <-- neu
+        self._axis_loads = AxisLoads()
 
     # ------------------------------------------------------------------
     # Jog commands

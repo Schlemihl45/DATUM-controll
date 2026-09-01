@@ -4,7 +4,75 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="3fc84b84-e64d-4830-8ea1-7eebf8ee0750" name="Changes" comment="" />
+    <list default="true" id="3fc84b84-e64d-4830-8ea1-7eebf8ee0750" name="Changes" comment="Created the simulated backend">
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/icon_loader.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/pages/machine_page.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/X-Coordinate.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/Y-Coordinate.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/Z-Coordinate.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/addTool.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/chamfermill.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/coolant.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/coolant_error.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/coolant_off.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/coolant_on.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/delete.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/deleteTool.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/drill.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/dropdown_arrow.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/endmill.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/facemill.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/feedrate.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/feedrate_iso.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/file-3d.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/files.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/formmill.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/light.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/light_error.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/light_off.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/light_on.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/logo.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/machine.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/projects.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/radius_endmill.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/rapid.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/reset.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/return.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/saveTool.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/saveTool_clicked.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/settings.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/setup.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/single_block.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/spindle.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/spindle_moving.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/start.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/start_single_block.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/statistics.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/stop.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/tools.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/icons/workpieces.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/resources/styles/main.qss" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/theme_loader.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/card.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/card_button.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/gcode_highlighter.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/gcode_viewer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/load_bar.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/machine_info_cards.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/override_panel.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/program_info_card.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/rounded_container.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/status_bar.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/controller/ui/widgets/tool_info_card.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/workpieces/Gcode.cnc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/dbnavigator.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/dbnavigator.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/controller/core/backends/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/controller/core/backends/base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/controller/core/backends/simulated.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/controller/core/backends/simulated.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/controller/core/machine/controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/controller/core/machine/controller.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/controller/domain/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/controller/domain/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/controller/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/controller/main.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -19,6 +87,7 @@
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="RESET_MODE" value="HARD" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
   &quot;lastFilter&quot;: {
@@ -40,18 +109,23 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python.main.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "main",
-    "settings.editor.selected.configurable": "preferences.lookFeel"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/felix/PycharmProjects/DATUM-controll/src/controller/ui/resources/icons&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.lookFeel&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\felix\PycharmProjects\DATUM-controll\src\controller\ui\resources\icons" />
+      <recent name="C:\Users\felix\PycharmProjects\DATUM-controll\src\controller\ui\resources" />
+    </key>
     <key name="MoveFile.RECENT_KEYS">
       <recent name="C:\Users\felix\PycharmProjects\DATUM-controll\src\controller" />
       <recent name="C:\Users\felix\PycharmProjects\DATUM-controll\cnc_controller" />
@@ -71,8 +145,8 @@
       <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
-      <option name="SCRIPT_NAME" value="C:\Users\felix\PycharmProjects\DATUM-controll\cnc_controller\main.py" />
-      <option name="PARAMETERS" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/controller/main.py" />
+      <option name="PARAMETERS" value="--simulate" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
       <option name="MODULE_MODE" value="false" />

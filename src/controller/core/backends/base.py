@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from domain.models import (
+from src.controller.domain.models import (
     FeedData,
     MachineError,
     MachineState,
     Position,
     ProgramState,
+    AxisLoads,
 )
 
 
@@ -228,6 +229,11 @@ class AbstractBackend(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_axis_loads(self) -> AxisLoads:
+        """Current per-axis load (percent + torque), wherever available."""
+        ...
+
     # ------------------------------------------------------------------
     # Coolant / auxiliary reads
     # ------------------------------------------------------------------
@@ -402,6 +408,19 @@ class AbstractBackend(ABC):
         LinuxCNC: cmd.auto(linuxcnc.AUTO_STEP)
         Precondition: MODE_AUTO, program loaded
         """
+        ...
+
+    @abstractmethod
+    def set_single_block(self, enabled: bool) -> None: ...
+
+    @abstractmethod
+    def get_single_block(self) -> bool: ...
+
+    @abstractmethod
+    def rewind_program(self) -> None:
+        """Reset to the start of the currently loaded program without
+        unloading it. Motion/spindle stop, line back to 0, file stays
+        loaded — unlike stop_program()/reset_interpreter()."""
         ...
 
     # ------------------------------------------------------------------
