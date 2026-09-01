@@ -30,7 +30,15 @@ from controller.ui.widgets.gcode_highlighter import GCodeHighlighter
 from controller.ui.widgets.gcode_viewer import GCodeViewer
 from controller.ui.widgets.override_panel import OverridePanel
 from controller.ui.widgets.program_info_card import ProgramInfoCard
-from controller.ui.widgets.sim_placeholder import SimPlaceholder
+# Try to import the real 3D sim widget; fall back to the text placeholder if
+# moderngl or numpy are not installed in this environment.
+try:
+    from controller.sim.ui.main_widget import DatumSimWidget as _SimWidget
+    from controller.sim import DatumSimWidget  # noqa: F401 — re-export for type hints
+    _SIM_AVAILABLE = True
+except ImportError:
+    from controller.ui.widgets.sim_placeholder import SimPlaceholder as _SimWidget  # type: ignore[assignment]
+    _SIM_AVAILABLE = False
 from controller.ui.widgets.tool_info_card import ToolInfoCard
 
 logger = logging.getLogger(__name__)
@@ -62,7 +70,7 @@ class MachinePage(QWidget):
 
         controller.error_occurred.connect(self._on_error)
 
-        self._sim = SimPlaceholder(self)
+        self._sim = _SimWidget(self)
         self._sim.set_mode("SIM")
 
         # Info Row

@@ -10,6 +10,9 @@ requires-python = ">=3.11"
 
 dependencies = [
     "pyside6>=6.7.0",
+    # 3D G-code viewport — optional at runtime (graceful fallback to SimPlaceholder)
+    "moderngl>=5.10.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +31,7 @@ datum-control = "controller.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-controller = ["ui/resources/**/*"]
+controller = ["ui/resources/**/*", "sim/assets/**/*"]
 
 [tool.ruff]
 line-length = 100

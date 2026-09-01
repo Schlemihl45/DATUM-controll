@@ -1,0 +1,234 @@
+/* =========================================================
+   DATUM Control — global stylesheet
+   No dynamic theme system (removed) — single fixed look.
+   ========================================================= */
+
+QMainWindow {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 1,
+        stop: 0 #141b26,
+        stop: 1 #0b0f16
+    );
+}
+
+/* --- Card (ui/widgets/card.py) --- */
+QFrame#Card {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 rgba(45, 55, 72, 255),
+        stop: 1 rgba(35, 42, 53, 255)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+}
+
+
+QLabel#CardTitle {
+    color: #8CA9C7;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Card Button */
+QLabel#CardButtonLabel {
+    color: #E7EBF0;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#CardButtonIcon {
+    color: #8fa0ba;
+}
+
+/* kleinere Variante für die QuickToolBar unten */
+QFrame#Card[variant="quick"] {
+    padding: 4px;
+}
+
+/* --- StatusBar (ui/widgets/status_bar.py) --- */
+QWidget#StatusBar {
+    background-color: transparent;
+    border-bottom: 1px solid rgba(88, 140, 196, 0.10);
+}
+
+QLabel#StatusBarLog {
+    color: #8fa0ba;
+    font-size: 12px;
+}
+
+QLabel#StatusBarLog[severity="warning"] {
+    color: #FFB020;
+}
+
+QLabel#StatusBarLog[severity="error"] {
+    color: #E5484D;
+    font-weight: 600;
+}
+
+QLabel#StatusBarClock {
+    color: #E7EBF0;
+    font-size: 12px;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+}
+
+QWidget#machine_info_panel{
+    background-color: green;
+}
+
+QLabel#InfoAxisLetter{
+    font-size: 24px;
+    color: #8CA9C7;
+}
+QLabel#InfoValue{
+    font-size: 32px;
+    font-weight: bold;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+}
+QLabel#InfoUnit{
+    font-size: 12px;
+    color: #8CA9C7;
+}
+
+QFrame#InfoDivider {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 rgba(110, 155, 205, 0),
+    stop:0.5 rgba(110, 155, 205, 55),
+    stop:1 rgba(110, 155, 205, 0));
+    border-radius: 1px;
+}
+
+QFrame#Card[variant="start"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #639922,
+        stop: 1 #27500A
+    );
+}
+
+QFrame#Card[variant="stop"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #E5484D,
+        stop: 1 #791F1F
+    );
+}
+
+QFrame#Card[variant="single_block"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #4A5568,
+        stop: 1 #1F2733
+    );
+}
+
+QFrame#Card[variant="single_block"][checked="true"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #4C6FE0,
+        stop: 1 #23315C
+    );
+    border: 1px solid rgba(120, 155, 230, 0.5);
+}
+
+QPlainTextEdit#GCodeView {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 48,
+        stop: 0 #262f40,
+        stop: 1 #212939
+    );
+    border: 1px solid rgba(88, 140, 196, 0.10);
+    border-radius: 8px;
+    padding: 8px;
+}
+
+QWidget#ScrollFadeTop {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(38,47,64,255),
+        stop:0.4 rgba(150,165,190,55),
+        stop:1 rgba(38,47,64,0));
+}
+QWidget#ScrollFadeBottom {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(38,47,64,0),
+        stop:0.6 rgba(150,165,190,55),
+        stop:1 rgba(38,47,64,255));
+}
+
+QSlider::groove:horizontal {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+
+QSlider::handle:horizontal {
+    background: #5FA8E0;
+    width: 32px;
+    height: 32px;
+    margin: -12px 0;
+    border-radius: 16px;
+}
+
+QSlider::handle:horizontal:pressed {
+    background: #8CA9C7;
+}
+
+QSlider::sub-page:horizontal {
+    background: rgba(95, 168, 224, 0.35);
+    border-radius: 4px;
+}
+
+/* --- Settings page --- */
+QTabWidget::pane {
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    background: rgba(35, 42, 53, 200);
+}
+
+QTabBar::tab {
+    background: rgba(45, 55, 72, 180);
+    color: #8CA9C7;
+    padding: 6px 16px;
+    border-radius: 4px 4px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QTabBar::tab:selected {
+    background: rgba(45, 55, 72, 255);
+    color: #E7EBF0;
+}
+
+QComboBox {
+    background: rgba(45, 55, 72, 200);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #E7EBF0;
+}
+
+QComboBox::drop-down {
+    border: none;
+}
+
+QPushButton {
+    background: rgba(45, 55, 72, 200);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+    padding: 6px 12px;
+    color: #E7EBF0;
+}
+
+QPushButton:hover {
+    background: rgba(60, 75, 96, 255);
+}
+
+QPushButton:pressed {
+    background: rgba(35, 42, 53, 255);
+}

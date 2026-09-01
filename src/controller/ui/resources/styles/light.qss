@@ -1,0 +1,240 @@
+/* =========================================================
+   DATUM Control — Light theme
+   Window gradient: #f0f4f8 → #dce4ef  (must stay in sync
+   with ThemeManager._THEME_WINDOW_GRADIENT["light"] and the
+   Viewport corner-fill shader)
+   ========================================================= */
+
+QMainWindow {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 1,
+        stop: 0 #f0f4f8,
+        stop: 1 #dce4ef
+    );
+}
+
+/* --- Card (ui/widgets/card.py) --- */
+QFrame#Card {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 rgba(255, 255, 255, 255),
+        stop: 1 rgba(236, 242, 250, 255)
+    );
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 6px;
+}
+
+QLabel#CardTitle {
+    color: #4A6080;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Card Button */
+QLabel#CardButtonLabel {
+    color: #1E2D40;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#CardButtonIcon {
+    color: #4A6080;
+}
+
+/* kleinere Variante für die QuickToolBar unten */
+QFrame#Card[variant="quick"] {
+    padding: 4px;
+}
+
+/* --- StatusBar (ui/widgets/status_bar.py) --- */
+QWidget#StatusBar {
+    background-color: transparent;
+    border-bottom: 1px solid rgba(74, 96, 128, 0.15);
+}
+
+QLabel#StatusBarLog {
+    color: #4A6080;
+    font-size: 12px;
+}
+
+QLabel#StatusBarLog[severity="warning"] {
+    color: #B06000;
+}
+
+QLabel#StatusBarLog[severity="error"] {
+    color: #C0292D;
+    font-weight: 600;
+}
+
+QLabel#StatusBarClock {
+    color: #1E2D40;
+    font-size: 12px;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+}
+
+QWidget#machine_info_panel {
+    background-color: transparent;
+}
+
+QLabel#InfoAxisLetter {
+    font-size: 24px;
+    color: #4A6080;
+}
+
+QLabel#InfoValue {
+    font-size: 32px;
+    font-weight: bold;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    color: #1E2D40;
+}
+
+QLabel#InfoUnit {
+    font-size: 12px;
+    color: #4A6080;
+}
+
+QFrame#InfoDivider {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(74, 96, 128, 0),
+        stop:0.5 rgba(74, 96, 128, 55),
+        stop:1 rgba(74, 96, 128, 0));
+    border-radius: 1px;
+}
+
+/* Start/Stop/Reset button variants */
+QFrame#Card[variant="start"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #7AC230,
+        stop: 1 #4A8A18
+    );
+}
+
+QFrame#Card[variant="stop"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #E55A60,
+        stop: 1 #A02020
+    );
+}
+
+QFrame#Card[variant="single_block"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #C8D4E4,
+        stop: 1 #9AAFC8
+    );
+}
+
+QFrame#Card[variant="single_block"][checked="true"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #4C7FD0,
+        stop: 1 #2050A0
+    );
+    border: 1px solid rgba(80, 120, 200, 0.5);
+}
+
+/* G-code viewer */
+QPlainTextEdit#GCodeView {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 48,
+        stop: 0 #eef2f8,
+        stop: 1 #e4eaf4
+    );
+    border: 1px solid rgba(74, 96, 128, 0.15);
+    border-radius: 8px;
+    padding: 8px;
+    color: #1E2D40;
+}
+
+/* Scroll fade overlays */
+QWidget#ScrollFadeTop {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(238, 242, 248, 255),
+        stop:0.4 rgba(120, 145, 180, 55),
+        stop:1 rgba(238, 242, 248, 0));
+}
+
+QWidget#ScrollFadeBottom {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(238, 242, 248, 0),
+        stop:0.6 rgba(120, 145, 180, 55),
+        stop:1 rgba(238, 242, 248, 255));
+}
+
+/* Override / settings sliders */
+QSlider::groove:horizontal {
+    height: 8px;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 4px;
+}
+
+QSlider::handle:horizontal {
+    background: #3A78C0;
+    width: 32px;
+    height: 32px;
+    margin: -12px 0;
+    border-radius: 16px;
+}
+
+QSlider::handle:horizontal:pressed {
+    background: #2060A0;
+}
+
+QSlider::sub-page:horizontal {
+    background: rgba(58, 120, 192, 0.35);
+    border-radius: 4px;
+}
+
+/* Settings page widgets */
+QTabWidget::pane {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 200);
+}
+
+QTabBar::tab {
+    background: rgba(236, 242, 250, 220);
+    color: #4A6080;
+    padding: 6px 16px;
+    border-radius: 4px 4px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QTabBar::tab:selected {
+    background: rgba(255, 255, 255, 255);
+    color: #1E2D40;
+}
+
+QComboBox {
+    background: rgba(255, 255, 255, 200);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #1E2D40;
+}
+
+QPushButton {
+    background: rgba(236, 242, 250, 220);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    padding: 6px 12px;
+    color: #1E2D40;
+}
+
+QPushButton:hover {
+    background: rgba(220, 232, 248, 255);
+}
+
+QPushButton:pressed {
+    background: rgba(200, 216, 240, 255);
+}
