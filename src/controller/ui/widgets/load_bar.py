@@ -7,8 +7,8 @@ for a slight "physical bar" depth instead of flat color.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QPainter, QColor, QPainterPath, QLinearGradient
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
 
 _LOW_COLOR = (89, 130, 196)      # dezent, unter der Warnschwelle

@@ -16,11 +16,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QWidget, QLabel, QGridLayout
+from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
 
-from src.controller.core.machine.controller import MachineController
-from src.controller.domain.models import ProgramState
-from src.controller.ui.widgets.card import Card
+from controller.core.machine.controller import MachineController
+from controller.domain.models import ProgramState
+from controller.ui.widgets.card import Card
 
 _WCS_NAMES = {1: "G54", 2: "G55", 3: "G56", 4: "G57", 5: "G58", 6: "G59",
               7: "G59.1", 8: "G59.2", 9: "G59.3"}

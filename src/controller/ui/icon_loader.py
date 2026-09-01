@@ -19,12 +19,14 @@ flattened paths rather than switching rendering approach again.
 
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QGuiApplication
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
+
+logger = logging.getLogger(__name__)
 
 _ICONS_DIR = Path(__file__).parent / "resources" / "icons"
 _ICON_COLOR = QColor("#D6D6D6")
@@ -40,7 +42,7 @@ def _resolve_path(label: str) -> Path | None:
     filename = label.lower().replace(" ", "_") + ".svg"
     path = _ICONS_DIR / filename
     if not path.exists():
-        print(f"[icon_loader] missing icon: {path}", file=sys.stderr)
+        logger.warning("missing icon: %s", path)
         return None
     return path
 
@@ -68,7 +70,7 @@ def get_icon(
 
     renderer = QSvgRenderer(str(path))
     if not renderer.isValid():
-        print(f"[icon_loader] invalid/unsupported SVG: {path}", file=sys.stderr)
+        logger.warning("invalid/unsupported SVG: %s", path)
         return QIcon()
 
     target_size = size or _DEFAULT_SIZE
@@ -92,7 +94,9 @@ def get_icon(
     return QIcon(pixmap)
 
 
-def get_icon_pixmap(label: str, size: QSize | None = None, color: QColor | None = None, tint: bool = False) -> QPixmap:
+def get_icon_pixmap(
+    label: str, size: QSize | None = None, color: QColor | None = None, tint: bool = False
+) -> QPixmap:
     """
     For QLabel.setPixmap() — uses QIcon.pixmap(size, devicePixelRatio),
     the Qt-native way to get a correctly scaled pixmap from a QIcon,

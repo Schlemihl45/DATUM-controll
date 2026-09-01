@@ -1,27 +1,62 @@
 """
-ui/main_window.py — Application shell: StatusBar + NavBar + empty stack
+ui/main_window.py — Application shell: StatusBar + machine info panel +
+page stack (Home <-> MachinePage) + quick-access button row.
+
+Every button here that represents a real machine command is wired
+through MachineController, never directly to the backend (see
+MachineController's own docstring: ui/ only ever talks to core/ via
+the controller's signals/slots and methods, so the backend stays
+swappable behind AbstractBackend without the UI knowing which
+implementation is active).
+
+Home-page buttons for pages that don't exist yet (Tools, Setup,
+Programs, Statistics, Settings) are intentionally disabled rather than
+wired to anything — there is no AbstractBackend command that
+corresponds to "open a page that hasn't been built". Wiring them to a
+no-op or a fake action would be misleading; see the roadmap for when
+each page is planned.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
+    QGridLayout,
     QHBoxLayout,
-    QVBoxLayout,
+    QMainWindow,
     QStackedWidget,
-    QPushButton, QGridLayout,
+    QVBoxLayout,
+    QWidget,
 )
 
-from src.controller.core.machine.controller import MachineController
-from src.controller.ui.widgets.status_bar import StatusBar
-from src.controller.ui.widgets.machine_info_cards import (
-    AxisPositionCard, FeedrateCard, SpindleCard,
+from controller.core.machine.controller import MachineController
+from controller.ui.icon_loader import get_icon
+from controller.ui.pages.machine_page import MachinePage
+from controller.ui.widgets.card_button import CardButton
+from controller.ui.widgets.machine_info_cards import (
+    AxisPositionCard,
+    FeedrateCard,
+    SpindleCard,
 )
-from src.controller.ui.widgets.card_button import CardButton
-from src.controller.ui.icon_loader import get_icon
-from src.controller.ui.pages.machine_page import MachinePage
+from controller.ui.widgets.status_bar import StatusBar
+
+# Digital-output pin for the work light, sent via M64/M65 MDI commands
+# (see AbstractBackend.send_mdi — "prefer M64/M65 via send_mdi() over
+# raw set_digital_output() calls"). Placeholder: must be replaced with
+# the real HAL pin number once the machine's INI/HAL config defines it.
+_LIGHT_MDI_PIN = 0
+
+_HOME_INDEX = 0
+_MACHINE_PAGE_INDEX = 1
+
+_NAV_ICON_SIZE = QSize(256, 256)
+
+
+def _nav_button(icon_name: str) -> CardButton:
+    """Big square icon-only button for the home-page navigation grid."""
+    return CardButton(icon=get_icon(icon_name, size=_NAV_ICON_SIZE), icon_size=256)
+
+
 class MainWindow(QMainWindow):
 
     def __init__(self, controller: MachineController, parent: QWidget | None = None) -> None:
@@ -32,11 +67,9 @@ class MainWindow(QMainWindow):
         self.resize(600, 900)
         self.setWindowIcon(get_icon("logo"))
 
-        self.stack_height = 0
-
         # -------------------------------------------------------
         # Status bar
-        #--------------------------------------------------------
+        # -------------------------------------------------------
         status_bar = StatusBar(controller, self)
 
         # -------------------------------------------------------
@@ -45,13 +78,12 @@ class MainWindow(QMainWindow):
         machine_info_area = QGridLayout()
         machine_info_area.setContentsMargins(0, 0, 0, 0)
         machine_info_area.setSpacing(6)
-        machine_info_area.addWidget(AxisPositionCard(controller), 0,0, 2,1)
-        machine_info_area.addWidget(FeedrateCard(controller), 0,1)
-        machine_info_area.addWidget(SpindleCard(controller), 1,1)
-
+        machine_info_area.addWidget(AxisPositionCard(controller), 0, 0, 2, 1)
+        machine_info_area.addWidget(FeedrateCard(controller), 0, 1)
+        machine_info_area.addWidget(SpindleCard(controller), 1, 1)
 
         # -------------------------------------------------------
-        # Stacked Widget
+        # Stacked Widget: Home <-> MachinePage
         # -------------------------------------------------------
         self._stack = QStackedWidget(self)
 
@@ -60,13 +92,18 @@ class MainWindow(QMainWindow):
         home_grid.setContentsMargins(0, 0, 0, 0)
         home_grid.setSpacing(6)
 
-        # icons
-        machine_page_btn = CardButton(icon=get_icon("machine", size=QSize(256,256)), icon_size=256)
-        tools_page_btn = CardButton(icon=get_icon("tools", size=QSize(256,256)), icon_size=256)
-        setup_page_btn = CardButton(icon=get_icon("setup", size=QSize(256, 256)), icon_size=256)
-        programs_page_btn = CardButton(icon=get_icon("workpieces", size=QSize(256,256)), icon_size=256)
-        statistics_page_btn = CardButton(icon=get_icon("statistics", size=QSize(256,256)), icon_size=256)
-        settings_page_btn = CardButton(icon=get_icon("settings", size=QSize(256,256)), icon_size=256)
+        machine_page_btn = _nav_button("machine")
+
+        # Pages that don't exist yet — disabled, not faked. See roadmap.
+        tools_page_btn = _nav_button("tools")
+        setup_page_btn = _nav_button("setup")
+        programs_page_btn = _nav_button("workpieces")
+        statistics_page_btn = _nav_button("statistics")
+        settings_page_btn = _nav_button("settings")
+        for btn in (tools_page_btn, setup_page_btn, programs_page_btn,
+                    statistics_page_btn, settings_page_btn):
+            btn.setEnabled(False)
+            btn.setToolTip("Noch nicht implementiert")
 
         home_grid.addWidget(machine_page_btn, 0, 0)
         home_grid.addWidget(tools_page_btn, 0, 1)
@@ -77,24 +114,24 @@ class MainWindow(QMainWindow):
 
         machine_page_btn.clicked.connect(self._on_machine_btn_clicked)
 
-        self._stack.addWidget(home_page)
-        self._stack.addWidget(MachinePage(controller, self))
+        self._stack.addWidget(home_page)                    # index _HOME_INDEX
+        self._stack.addWidget(MachinePage(controller, self))  # index _MACHINE_PAGE_INDEX
 
         # -------------------------------------------------------
-        # Quick Button Row
+        # Quick Button Row — light, coolant, back
         # -------------------------------------------------------
         button_row = QHBoxLayout()
         button_row.setSpacing(6)
 
         self.light_btn = CardButton(icon=get_icon("light_off", size=QSize(48, 48)), icon_size=48)
         self.light_btn.setCheckable(True)
-        self.light_btn.toggled.connect(self.on_light_toggled)
+        self.light_btn.toggled.connect(self._on_light_toggled)
         self.light_btn.setFixedSize(100, 100)
         button_row.addWidget(self.light_btn)
 
         self.coolant_btn = CardButton(icon=get_icon("coolant_off"), icon_size=64)
         self.coolant_btn.setCheckable(True)
-        self.coolant_btn.toggled.connect(self.on_coolant_toggled)
+        self.coolant_btn.toggled.connect(self._on_coolant_toggled)
         self.coolant_btn.setFixedSize(100, 100)
         button_row.addWidget(self.coolant_btn)
 
@@ -102,7 +139,7 @@ class MainWindow(QMainWindow):
 
         self.return_btn = CardButton(icon=get_icon("return"), icon_size=48)
         self.return_btn.setFixedSize(100, 100)
-        self.return_btn.clicked.connect(self.on_return_clicked)
+        self.return_btn.clicked.connect(self._on_return_clicked)
         button_row.addWidget(self.return_btn)
 
         # -------------------------------------------------------
@@ -126,21 +163,39 @@ class MainWindow(QMainWindow):
         central.setLayout(root_layout)
         self.setCentralWidget(central)
 
-    def on_return_clicked(self) -> None:
-        print(self.stack_height)
-        if self.stack_height == 0:
-            pass
-        elif self.stack_height == 1:
-            self._stack.setCurrentIndex(0)
-
-    def on_light_toggled(self, checked: bool) -> None:
-        icon = "light_on" if checked else "light_off"
-        self.light_btn.set_icon(get_icon(icon, size=QSize(48, 48)))
-
-    def on_coolant_toggled(self, checked: bool) -> None:
-        icon = "coolant_on" if checked else "coolant_off"
-        self.coolant_btn.set_icon(get_icon(icon, size=QSize(64, 64)))
+    # ------------------------------------------------------------------
+    # Navigation
+    # ------------------------------------------------------------------
 
     def _on_machine_btn_clicked(self) -> None:
-        self._stack.setCurrentIndex(1)
-        self.stack_height = 1
+        self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
+
+    def _on_return_clicked(self) -> None:
+        self._stack.setCurrentIndex(_HOME_INDEX)
+
+    # ------------------------------------------------------------------
+    # Quick buttons -> AbstractBackend (via MachineController)
+    # ------------------------------------------------------------------
+
+    def _on_light_toggled(self, checked: bool) -> None:
+        # No dedicated light command exists on AbstractBackend — per its
+        # own docstring, digital outputs go through MDI M64/M65 rather
+        # than a raw HAL call. send_mdi() already enforces the ON+homed+
+        # idle precondition and reports a warning via the status bar if
+        # it isn't met, so nothing extra to check here.
+        mdi_command = f"M64 P{_LIGHT_MDI_PIN}" if checked else f"M65 P{_LIGHT_MDI_PIN}"
+        self._controller.send_mdi(mdi_command)
+        icon_name = "light_on" if checked else "light_off"
+        self.light_btn.set_icon(get_icon(icon_name, size=QSize(48, 48)))
+
+    def _on_coolant_toggled(self, checked: bool) -> None:
+        if checked:
+            self._controller.flood_on()
+        else:
+            self._controller.flood_off()
+        # Optimistic icon update. flood_on()/flood_off() silently no-op
+        # when the machine isn't ON (see MachineController) — same
+        # caveat MachinePage's own buttons have; a future "reflect real
+        # backend state" pass would need MachineController to warn on
+        # rejected coolant commands the way it already does for MDI.
+        self.coolant_btn.set_icon(get_icon("coolant_on" if checked else "coolant_off"))

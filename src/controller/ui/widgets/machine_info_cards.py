@@ -16,18 +16,21 @@ expected, not a live-update artifact.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QWidget, QLabel, QHBoxLayout, QVBoxLayout,
-    QSpacerItem, QSizePolicy,
-)
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QSpacerItem,
+    QWidget,
+)
 
-from src.controller.core.machine.controller import MachineController
-from src.controller.domain.models import Position, FeedData
-from src.controller.ui.widgets.card import Card
-from src.controller.ui.widgets.load_bar import LoadBar
-from src.controller.ui.icon_loader import get_icon
+from controller.core.machine.controller import MachineController
+from controller.domain.models import FeedData, Position
+from controller.ui.icon_loader import get_icon
+from controller.ui.widgets.card import Card
+from controller.ui.widgets.load_bar import LoadBar
 
 # ======================================================================
 # Alle Abstände als % der jeweiligen Card-Breite — hier zentral einstellbar
@@ -115,13 +118,16 @@ class _LiveValueCard(Card):
         self.layout().setContentsMargins(left, top, right, bottom)
 
 
-def _build_value_row(icon_name: str, letter: str | None, unit_text: str) -> tuple[_PercentRow, QLabel]:
+def _build_value_row(
+    icon_name: str, letter: str | None, unit_text: str
+) -> tuple[_PercentRow, QLabel]:
     row = _PercentRow()
 
+    icon_size = QSize(ICON_SIZE, ICON_SIZE)
     icon_label = QLabel()
     icon_label.setObjectName("InfoIcon")
-    icon_label.setFixedSize(ICON_SIZE, ICON_SIZE)
-    icon_label.setPixmap(get_icon(icon_name, size=QSize(ICON_SIZE, ICON_SIZE)).pixmap(ICON_SIZE, ICON_SIZE))
+    icon_label.setFixedSize(icon_size)
+    icon_label.setPixmap(get_icon(icon_name, size=icon_size).pixmap(icon_size))
     row.add_widget(icon_label)
 
     row.add_gap(GAP_ICON_TO_LETTER_PCT)

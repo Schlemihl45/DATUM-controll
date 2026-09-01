@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.controller.domain.models import (
+from controller.domain.models import (
+    AxisLoads,
     FeedData,
     MachineError,
     MachineState,
     Position,
     ProgramState,
-    AxisLoads,
 )
 
 

@@ -3,17 +3,17 @@ from __future__ import annotations
 import math
 import time
 
-from src.controller.domain.models import (
+from controller.core.backends.base import AbstractBackend
+from controller.domain.models import (
+    AxisLoads,
     ErrorSeverity,
     FeedData,
+    Load,
     MachineError,
     MachineState,
     Position,
     ProgramState,
-    AxisLoads,
-    Load,
 )
-from src.controller.core.backends.base import AbstractBackend
 
 
 class SimulatedBackend(AbstractBackend):
@@ -101,7 +101,9 @@ class SimulatedBackend(AbstractBackend):
 
         self._poll_spindle()
 
-    def _simulated_load(self, base: float, amplitude: float, freq: float, t: float, phase: float = 0.0) -> Load:
+    def _simulated_load(
+        self, base: float, amplitude: float, freq: float, t: float, phase: float = 0.0
+    ) -> Load:
         """Oszillierende Last: base ± amplitude, nie dauerhaft am Anschlag,
         solange amplitude + base < 100 gewählt wird."""
         percent = base + amplitude * abs(math.sin(t * freq + phase))
@@ -384,8 +386,9 @@ class SimulatedBackend(AbstractBackend):
     def resume_program(self) -> None:
         if self._program_state == ProgramState.PAUSED:
             if self._single_block:
-                self._program_state = ProgramState.RUNNING  # feuert EINMAL _poll_running_single_block, pausiert sofort wieder
-                self._spindle_target_rpm = 25000.0  # Tippfehler von vorhin — auf 8000.0 korrigieren
+                # feuert EINMAL _poll_running_single_block, pausiert sofort wieder
+                self._program_state = ProgramState.RUNNING
+                self._spindle_target_rpm = 8000.0
                 return
             elapsed = time.monotonic() - self._program_start_time
             self._program_start_time = time.monotonic() - elapsed

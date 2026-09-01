@@ -11,11 +11,11 @@ property ("checked") that QSS can select on.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QLabel, QWidget
 
-from src.controller.ui.widgets.card import Card
+from controller.ui.widgets.card import Card
 
 
 class CardButton(Card):

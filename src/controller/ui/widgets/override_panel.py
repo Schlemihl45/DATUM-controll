@@ -4,12 +4,12 @@ ui/widgets/override_panel.py — Feed/Rapid/Spindle override sliders.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QSlider
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
-from src.controller.core.machine.controller import MachineController
-from src.controller.ui.widgets.card import Card
-from src.controller.ui.icon_loader import get_icon
+from controller.core.machine.controller import MachineController
+from controller.ui.icon_loader import get_icon
+from controller.ui.widgets.card import Card
 
 _ICON_SIZE = 32
 
@@ -57,13 +57,16 @@ class OverridePanel(Card):
         row.setSpacing(24)
         self.content_layout.addLayout(row)
 
-        self._feed = _OverrideSlider("Feedrate","feedrate_iso", 0, 150)
-        self._rapid = _OverrideSlider("Rapid","rapid", 0, 150)
-        self._spindle = _OverrideSlider("Spindle","spindle", 0, 150)
+        self._feed = _OverrideSlider("Feedrate", "feedrate_iso", 0, 150)
+        self._rapid = _OverrideSlider("Rapid", "rapid", 0, 150)
+        self._spindle = _OverrideSlider("Spindle", "spindle", 0, 150)
 
-        self._feed.slider.valueChanged.connect(lambda v: controller.set_feed_override(v / 100.0))
-        self._rapid.slider.valueChanged.connect(lambda v: controller.set_rapid_override(v / 100.0))
-        self._spindle.slider.valueChanged.connect(lambda v: controller.set_spindle_override(v / 100.0))
+        self._feed.slider.valueChanged.connect(
+            lambda v: controller.set_feed_override(v / 100.0))
+        self._rapid.slider.valueChanged.connect(
+            lambda v: controller.set_rapid_override(v / 100.0))
+        self._spindle.slider.valueChanged.connect(
+            lambda v: controller.set_spindle_override(v / 100.0))
 
         for widget in (self._feed, self._rapid, self._spindle):
             row.addWidget(widget)

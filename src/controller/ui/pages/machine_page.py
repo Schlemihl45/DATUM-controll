@@ -1,40 +1,52 @@
 """
 ui/pages/machine_page.py — Machine page: 3D view + G-code + Start/Stop.
 
-DatumSimWidget defaults to SIM mode (local preview, no controller
-involvement). Start switches it to MACHINE mode and calls
-controller.run_program() — the ONLY place that transition happens.
-program_state_changed is the single source of truth for both the
-sim widget's mode and the button states; nothing else sets them.
+SimPlaceholder (see ui/widgets/sim_placeholder.py) defaults to SIM mode
+(local preview, no controller involvement). Start switches it to
+MACHINE mode and calls controller.run_program() — the ONLY place that
+transition happens. program_state_changed is the single source of
+truth for both the sim widget's mode and the button states; nothing
+else sets them.
 """
 
 from __future__ import annotations
 
-from cgitb import enable
+import logging
 from pathlib import Path
 
-from PySide6.QtGui import QTextCharFormat, QColor, QTextCursor, QFont
+from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
     QHBoxLayout,
     QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
-from datum_sim.ui.main_widget import DatumSimWidget
+from controller.core.machine.controller import ErrorSeverity, MachineController, MachineError
+from controller.domain.models import Position, ProgramState
+from controller.ui.icon_loader import get_icon
+from controller.ui.widgets.card_button import CardButton
+from controller.ui.widgets.gcode_highlighter import GCodeHighlighter
+from controller.ui.widgets.gcode_viewer import GCodeViewer
+from controller.ui.widgets.override_panel import OverridePanel
+from controller.ui.widgets.program_info_card import ProgramInfoCard
+from controller.ui.widgets.sim_placeholder import SimPlaceholder
+from controller.ui.widgets.tool_info_card import ToolInfoCard
 
-from src.controller.core.machine.controller import MachineController, MachineError, ErrorSeverity
-from src.controller.domain.models import Position, ProgramState
-from src.controller.ui.widgets.card_button import CardButton
-from src.controller.ui.icon_loader import get_icon
-from src.controller.ui.widgets.gcode_highlighter import GCodeHighlighter
-from src.controller.ui.widgets.gcode_viewer import GCodeViewer
-from src.controller.ui.widgets.override_panel import OverridePanel
-from src.controller.ui.widgets.program_info_card import ProgramInfoCard
-from src.controller.ui.widgets.tool_info_card import ToolInfoCard
+logger = logging.getLogger(__name__)
+
+_LOG_LEVEL = {
+    ErrorSeverity.INFO: logging.INFO,
+    ErrorSeverity.WARNING: logging.WARNING,
+    ErrorSeverity.ERROR: logging.ERROR,
+    ErrorSeverity.CRITICAL: logging.CRITICAL,
+}
 
 # TODO: Platzhalter, bis die Workpieces-Seite einen echten Pfad liefert.
-_TEST_GCODE_PATH = r"C:\Users\felix\PycharmProjects\DATUM-controll\workpieces\Gcode.cnc"
+# Relativ zum Repo-Root (.../src/controller/ui/pages/machine_page.py -> 4x parent),
+# damit der Pfad auf jedem Rechner/Betriebssystem funktioniert, nicht nur lokal.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_DEFAULT_GCODE_PATH = _REPO_ROOT / "workpieces" / "Gcode.cnc"
 
 
 class MachinePage(QWidget):
@@ -50,7 +62,7 @@ class MachinePage(QWidget):
 
         controller.error_occurred.connect(self._on_error)
 
-        self._sim = DatumSimWidget(self)
+        self._sim = SimPlaceholder(self)
         self._sim.set_mode("SIM")
 
         # Info Row
@@ -77,9 +89,11 @@ class MachinePage(QWidget):
 
         # Buttons
         self._start_btn = CardButton("Start", icon=get_icon("start", tint=True), icon_size=64)
-        self._stop_btn = CardButton("Feed hold",icon=get_icon("stop", tint=True), icon_size=64)
-        self._reset_btn = CardButton("Reset",icon=get_icon("reset", tint=True), icon_size=64)
-        self._single_block_btn = CardButton("Single Block", icon=get_icon("single_block", tint=True), icon_size=48)
+        self._stop_btn = CardButton("Feed hold", icon=get_icon("stop", tint=True), icon_size=64)
+        self._reset_btn = CardButton("Reset", icon=get_icon("reset", tint=True), icon_size=64)
+        self._single_block_btn = CardButton(
+            "Single Block", icon=get_icon("single_block", tint=True), icon_size=48
+        )
         self._single_block_btn.setCheckable(True)
         self._start_btn.setProperty("variant", "start")
         self._stop_btn.setProperty("variant", "stop")
@@ -155,9 +169,13 @@ class MachinePage(QWidget):
             self._controller.resume_program()
             return
 
-        path = _TEST_GCODE_PATH
+        path = str(_DEFAULT_GCODE_PATH)
         if not Path(path).exists():
-            print(f"[MachinePage] G-Code-Datei nicht gefunden: {path}")
+            logger.warning("G-Code-Datei nicht gefunden: %s", path)
+            self._controller.error_occurred.emit(
+                MachineError(f"G-Code-Datei nicht gefunden: {path}",
+                             ErrorSeverity.WARNING, source="MachinePage")
+            )
             return
 
         self._loaded_path = path
@@ -172,7 +190,10 @@ class MachinePage(QWidget):
     def _on_reset_clicked(self) -> None:
         if self._controller.program_state == ProgramState.RUNNING:
             self._controller.error_occurred.emit(
-                MachineError("Reset nicht möglich: Programm läuft noch.", ErrorSeverity.WARNING, source="MachinePage")
+                MachineError(
+                    "Reset nicht möglich: Programm läuft noch.",
+                    ErrorSeverity.WARNING, source="MachinePage",
+                )
             )
             return
         self._controller.rewind_program()
@@ -217,5 +238,7 @@ class MachinePage(QWidget):
         except UnicodeDecodeError:
             return data.decode("cp1252")
 
-    def _on_error(self, error) -> None:
-        print(f"[MachinePage] {error.severity.name}: {error.message}")
+    def _on_error(self, error: MachineError) -> None:
+        # StatusBar already renders this for the user (see status_bar.py);
+        # log it too so it survives in the terminal/log file for debugging.
+        logger.log(_LOG_LEVEL[error.severity], "%s", error.message)

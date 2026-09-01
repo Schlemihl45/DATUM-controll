@@ -7,10 +7,11 @@ is built.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QLabel, QGridLayout
+from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
 
-from src.controller.core.machine.controller import MachineController
-from src.controller.ui.widgets.card import Card
+from controller.domain.models import Tool
+from controller.ui.widgets.card import Card
+
 
 class ToolInfoCard(Card):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -36,7 +37,7 @@ class ToolInfoCard(Card):
         grid.addWidget(QLabel("Material"), 2, 0)
         grid.addWidget(self._material_label, 2, 1)
 
-    def set_tool(self, tool) -> None:
+    def set_tool(self, tool: Tool | None) -> None:
         """tool: domain.models.Tool | None — wired up once the tool
         repository exists. For now, always called with None."""
         if tool is None:
@@ -44,6 +45,8 @@ class ToolInfoCard(Card):
             self._diameter_label.setText("—")
             self._material_label.setText("—")
             return
-        self._name_label.setText(tool.name)
+        # Tool has no dedicated "name" field — fall back to the T-number
+        # when no free-text description was entered.
+        self._name_label.setText(tool.description or f"T{tool.number}")
         self._diameter_label.setText(f"{tool.diameter} mm")
         self._material_label.setText(tool.material or "—")

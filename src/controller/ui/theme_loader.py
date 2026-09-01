@@ -11,7 +11,6 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-
 _QSS_PATH = Path(__file__).parent / "resources" / "styles" / "main.qss"
 
 
