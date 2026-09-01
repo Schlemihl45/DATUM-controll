@@ -1,20 +1,16 @@
 """
 ui/main_window.py — Application shell: StatusBar + machine info panel +
-page stack (Home <-> MachinePage) + quick-access button row.
+page stack (Home <-> MachinePage <-> SettingsPage) + quick-access button row.
 
-Every button here that represents a real machine command is wired
-through MachineController, never directly to the backend (see
-MachineController's own docstring: ui/ only ever talks to core/ via
-the controller's signals/slots and methods, so the backend stays
-swappable behind AbstractBackend without the UI knowing which
-implementation is active).
+Every button that represents a real machine command is wired through
+MachineController, never directly to the backend (see MachineController's
+docstring: ui/ only ever talks to core/ via signals/slots and methods so the
+backend stays swappable behind AbstractBackend).
 
-Home-page buttons for pages that don't exist yet (Tools, Setup,
-Programs, Statistics, Settings) are intentionally disabled rather than
-wired to anything — there is no AbstractBackend command that
-corresponds to "open a page that hasn't been built". Wiring them to a
-no-op or a fake action would be misleading; see the roadmap for when
-each page is planned.
+ThemeManager is accepted as a constructor argument and passed on to
+SettingsPage so the General tab can apply theme switches app-wide.
+The viewport is registered with ThemeManager inside MachinePage after
+construction so corner-fill colours stay in sync with the active theme.
 """
 
 from __future__ import annotations
@@ -32,6 +28,7 @@ from PySide6.QtWidgets import (
 from controller.core.machine.controller import MachineController
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.machine_page import MachinePage
+from controller.ui.pages.settings_page import SettingsPage
 from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.machine_info_cards import (
     AxisPositionCard,
@@ -46,8 +43,9 @@ from controller.ui.widgets.status_bar import StatusBar
 # the real HAL pin number once the machine's INI/HAL config defines it.
 _LIGHT_MDI_PIN = 0
 
-_HOME_INDEX = 0
+_HOME_INDEX         = 0
 _MACHINE_PAGE_INDEX = 1
+_SETTINGS_INDEX     = 2
 
 _NAV_ICON_SIZE = QSize(256, 256)
 
@@ -59,9 +57,15 @@ def _nav_button(icon_name: str) -> CardButton:
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, controller: MachineController, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        controller: MachineController,
+        theme_manager=None,       # ThemeManager | None — None = no theme switching
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._controller = controller
+        self._controller    = controller
+        self._theme_manager = theme_manager
 
         self.setWindowTitle("DATUM Control")
         self.resize(600, 900)
@@ -101,7 +105,7 @@ class MainWindow(QMainWindow):
         statistics_page_btn = _nav_button("statistics")
         settings_page_btn = _nav_button("settings")
         for btn in (tools_page_btn, setup_page_btn, programs_page_btn,
-                    statistics_page_btn, settings_page_btn):
+                    statistics_page_btn):
             btn.setEnabled(False)
             btn.setToolTip("Noch nicht implementiert")
 
@@ -113,9 +117,34 @@ class MainWindow(QMainWindow):
         home_grid.addWidget(settings_page_btn, 2, 1)
 
         machine_page_btn.clicked.connect(self._on_machine_btn_clicked)
+        settings_page_btn.clicked.connect(self._on_settings_btn_clicked)
 
-        self._stack.addWidget(home_page)                    # index _HOME_INDEX
-        self._stack.addWidget(MachinePage(controller, self))  # index _MACHINE_PAGE_INDEX
+        # Build pages
+        self._machine_page = MachinePage(controller, self)
+        self._stack.addWidget(home_page)                        # _HOME_INDEX
+        self._stack.addWidget(self._machine_page)               # _MACHINE_PAGE_INDEX
+
+        # Build SettingsPage — try to pass SimSettings if sim is available
+        _sim_settings = None
+        try:
+            from controller.sim.core.settings import AppSettings
+            _sim_settings = AppSettings.instance()
+        except ImportError:
+            pass
+
+        self._settings_page = SettingsPage(
+            theme_manager=theme_manager,
+            sim_settings=_sim_settings,
+            parent=self,
+        )
+        self._stack.addWidget(self._settings_page)              # _SETTINGS_INDEX
+
+        # Register viewport with ThemeManager for gradient sync
+        if theme_manager is not None:
+            try:
+                theme_manager.register_viewport(self._machine_page._sim.viewport)
+            except AttributeError:
+                pass   # sim widget not the real one (SimPlaceholder)
 
         # -------------------------------------------------------
         # Quick Button Row — light, coolant, back
@@ -169,6 +198,9 @@ class MainWindow(QMainWindow):
 
     def _on_machine_btn_clicked(self) -> None:
         self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
+
+    def _on_settings_btn_clicked(self) -> None:
+        self._stack.setCurrentIndex(_SETTINGS_INDEX)
 
     def _on_return_clicked(self) -> None:
         self._stack.setCurrentIndex(_HOME_INDEX)
