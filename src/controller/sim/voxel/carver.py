@@ -137,22 +137,31 @@ class VoxelCarver:
             dy = ys - ty                                        # (ly,)
             r2_xy = dx[np.newaxis, :] ** 2 + dy[:, np.newaxis] ** 2   # (ly, lx)
 
-            # Per-sample Z-range: restrict to [tz, tz + cut_len] mapped to
-            # the bbox-relative index range.  For deep plunges this shrinks
-            # the inner loop from lz (all bbox Z-slices) down to ≈ cut_len/vs
-            # slices — a 5–10× speedup on long vertical segments.
+            # Per-sample Z-range: restrict to [tz, tz + cut_len] in voxel
+            # index space.  Vectorise over all Z slices at once with
+            # profile_radius_at_array() — eliminates the Python z-loop and
+            # replaces O(n_z) scalar calls with a single numpy broadcast.
             iz_abs_lo = max(iz0, int(np.floor((tz           - origin[2]) / vs)))
             iz_abs_hi = min(iz1, int(np.ceil ((tz + cut_len - origin[2]) / vs)) + 1)
+            if iz_abs_lo >= iz_abs_hi:
+                continue
 
-            for iz_abs in range(iz_abs_lo, iz_abs_hi):
-                iz_local = iz_abs - iz0
-                # Height above tool tip (z=0 at tip, increases toward shank).
-                # profile_radius_at() uses the same convention.
-                local_z = float(zs[iz_local]) - tz
-                if local_z < 0.0 or local_z > cut_len:
-                    continue
-                r_at_z  = tool.profile_radius_at(local_z)
-                inside[iz_local] |= (r2_xy <= r_at_z * r_at_z)
+            iz_range  = np.arange(iz_abs_lo, iz_abs_hi, dtype=np.int32)
+            iz_local  = iz_range - iz0                     # (n_z,) relative to box
+            local_zs  = zs[iz_local] - tz                  # (n_z,) height above tip
+
+            valid     = (local_zs >= 0.0) & (local_zs <= cut_len)
+            iz_local_v = iz_local[valid]
+            local_zs_v = local_zs[valid]
+            if len(iz_local_v) == 0:
+                continue
+
+            # profile_radius_at_array: (n_valid,) → no Python loop
+            radii = tool.profile_radius_at_array(local_zs_v)
+            r2_z  = (radii ** 2)[:, np.newaxis, np.newaxis]   # (n_valid, 1, 1)
+            # Broadcast: r2_xy is (ly, lx), r2_z is (n_valid, 1, 1)
+            # Result: (n_valid, ly, lx) — fancy-index into inside
+            inside[iz_local_v] |= (r2_xy[np.newaxis] <= r2_z)
 
         # ── Write to grid ─────────────────────────────────────────────────────
         self._grid.carve(ix0, ix1, iy0, iy1, iz0, iz1, inside)

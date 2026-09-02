@@ -115,3 +115,69 @@ class ToolDefinition:
             return float(min(tip_r + z * np.tan(np.radians(self.taper_angle)), r))
 
         return r
+
+    def profile_radius_at_array(self, z_arr: np.ndarray) -> np.ndarray:
+        """
+        Vectorised version of profile_radius_at.
+
+        Parameters
+        ----------
+        z_arr : (n,) float32 array
+            Heights above the tool tip (z=0 at tip, positive toward shank).
+
+        Returns
+        -------
+        (n,) float32 array of tool radii at each height.
+        No Python loop — uses numpy broadcast throughout.
+        """
+        r = np.float32(self.radius)
+        # Default: full radius for z >= 0, 0 for z < 0
+        result = np.where(z_arr < 0.0, np.float32(0.0), r).astype("f4")
+
+        if self.tool_type == ToolType.ENDMILL:
+            return result
+
+        elif self.tool_type == ToolType.BALL_ENDMILL:
+            in_ball = (z_arr >= 0.0) & (z_arr <= r)
+            result[in_ball] = np.sqrt(
+                np.maximum(np.float32(0.0), r ** 2 - (r - z_arr[in_ball]) ** 2)
+            ).astype("f4")
+            return result
+
+        elif self.tool_type == ToolType.BULL_ENDMILL:
+            cr = np.float32(min(self.corner_radius, self.radius))
+            flat_r = r - cr
+            in_torus = (z_arr >= 0.0) & (z_arr <= cr)
+            result[in_torus] = (
+                flat_r + np.sqrt(
+                    np.maximum(np.float32(0.0), cr ** 2 - (cr - z_arr[in_torus]) ** 2)
+                )
+            ).astype("f4")
+            return result
+
+        elif self.tool_type == ToolType.CHAMFER:
+            half = np.radians(self.tip_angle / 2.0)
+            result = np.where(
+                z_arr < 0.0, np.float32(0.0),
+                np.minimum(z_arr * np.tan(half), r),
+            )
+            return result.astype("f4")
+
+        elif self.tool_type == ToolType.DRILL:
+            half = np.radians(self.tip_angle / 2.0)
+            tip_h = r / np.tan(half)
+            result = np.where(
+                z_arr < 0.0, np.float32(0.0),
+                np.where(z_arr <= tip_h, z_arr * np.tan(half), r),
+            )
+            return result.astype("f4")
+
+        elif self.tool_type == ToolType.TAPER:
+            tip_r = np.float32(0.5)
+            result = np.where(
+                z_arr < 0.0, np.float32(0.0),
+                np.minimum(tip_r + z_arr * np.tan(np.radians(self.taper_angle)), r),
+            )
+            return result.astype("f4")
+
+        return result

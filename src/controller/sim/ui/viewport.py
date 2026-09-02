@@ -151,11 +151,9 @@ void main() {
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
 
-def _build_axes_grid(axis_len: float = 40.0, grid_range: int = 200, grid_step: int = 10):
-    """Build vertex + color arrays for XYZ axes and an XY grid plane."""
+def _build_axes(axis_len: float = 40.0):
+    """Build vertex + color arrays for the three XYZ axis lines only."""
     verts, cols = [], []
-
-    # Axis lines (X=red, Y=green, Z=blue)
     for end, color in [
         ([axis_len, 0, 0], [1.0, 0.2, 0.2]),
         ([0, axis_len, 0], [0.2, 1.0, 0.2]),
@@ -163,15 +161,18 @@ def _build_axes_grid(axis_len: float = 40.0, grid_range: int = 200, grid_step: i
     ]:
         verts += [[0, 0, 0], end]
         cols  += [color, color]
+    return np.array(verts, dtype='f4'), np.array(cols, dtype='f4')
 
-    # Grid lines (dark grey)
+
+def _build_grid(grid_range: int = 200, grid_step: int = 10):
+    """Build vertex + color arrays for the XY grid plane lines only."""
+    verts, cols = [], []
     gc = [0.22, 0.22, 0.22]
     for i in range(-grid_range, grid_range + 1, grid_step):
         verts += [[i, -grid_range, 0], [i, grid_range, 0]]
         cols  += [gc, gc]
         verts += [[-grid_range, i, 0], [grid_range, i, 0]]
         cols  += [gc, gc]
-
     return np.array(verts, dtype='f4'), np.array(cols, dtype='f4')
 
 
@@ -269,7 +270,9 @@ class Viewport(QOpenGLWidget):
         self._path_vao       = None
         self._path_arc_lengths = np.array([0.0])
         self._cyl_vao        = None
-        self._show_grid      = True
+        self._show_grid         = True
+        self._show_axes         = True
+        self._show_datum_symbol = True
         self._perf           = None            # optional PerfMonitor, set externally
 
         # Background colors from settings
@@ -382,16 +385,27 @@ class Viewport(QOpenGLWidget):
         self._corner_fill_vao = self.ctx.vertex_array(self._corner_fill_prog, [])
         self._corner_radius_px = 12.0
 
-        # Upload static geometry
-        verts, colors = _build_axes_grid()
-        self._scene_vao = self.ctx.vertex_array(
+        # Upload static geometry — axes and grid as separate VAOs for
+        # independent show/hide control.
+        ax_v, ax_c = _build_axes()
+        self._axes_vao = self.ctx.vertex_array(
             self._prog,
             [
-                (self.ctx.buffer(verts.tobytes()),  '3f', 'in_pos'),
-                (self.ctx.buffer(colors.tobytes()), '3f', 'in_col'),
+                (self.ctx.buffer(ax_v.tobytes()), '3f', 'in_pos'),
+                (self.ctx.buffer(ax_c.tobytes()), '3f', 'in_col'),
             ],
         )
-        self._scene_vert_count = len(verts)
+        self._axes_vert_count = len(ax_v)
+
+        gr_v, gr_c = _build_grid()
+        self._grid_vao = self.ctx.vertex_array(
+            self._prog,
+            [
+                (self.ctx.buffer(gr_v.tobytes()), '3f', 'in_pos'),
+                (self.ctx.buffer(gr_c.tobytes()), '3f', 'in_col'),
+            ],
+        )
+        self._grid_vert_count = len(gr_v)
 
         vt, ct, vl, cl = _build_datum_symbol(radius=2.0, line_ext=5.0)
         self._datum_tri_vao = self.ctx.vertex_array(
@@ -436,10 +450,14 @@ class Viewport(QOpenGLWidget):
             self._upload_path(self._pending_path)
             del self._pending_path
 
-        # Grid visibility from settings
+        # Visibility flags from settings
         s = AppSettings.instance()
-        self._show_grid = s.show_grid
+        self._show_grid         = s.show_grid
+        self._show_axes         = s.show_axes
+        self._show_datum_symbol = s.show_datum_symbol
         s.show_grid_changed.connect(self._on_show_grid_changed)
+        s.show_axes_changed.connect(self._on_show_axes_changed)
+        s.show_datum_symbol_changed.connect(self._on_show_datum_symbol_changed)
 
         # VoxelRenderer — set externally via set_voxel_renderer()
         self._voxel_renderer = None
@@ -468,11 +486,14 @@ class Viewport(QOpenGLWidget):
         mvp    = self.camera.mvp(aspect)
         self._prog['u_mvp'].write(mvp.T.tobytes())
 
+        if self._show_axes:
+            self._axes_vao.render(moderngl.LINES, vertices=self._axes_vert_count)
         if self._show_grid:
-            self._scene_vao.render(moderngl.LINES, vertices=self._scene_vert_count)
+            self._grid_vao.render(moderngl.LINES, vertices=self._grid_vert_count)
 
-        self._datum_tri_vao.render(moderngl.TRIANGLES, vertices=self._datum_tri_count)
-        self._datum_line_vao.render(moderngl.LINES,    vertices=self._datum_line_count)
+        if self._show_datum_symbol:
+            self._datum_tri_vao.render(moderngl.TRIANGLES, vertices=self._datum_tri_count)
+            self._datum_line_vao.render(moderngl.LINES,    vertices=self._datum_line_count)
 
         # 3. G-code path
         if self._path_vao and self._path_vert_count > 1:
@@ -589,6 +610,14 @@ class Viewport(QOpenGLWidget):
 
     def _on_show_grid_changed(self, visible: bool) -> None:
         self._show_grid = visible
+        self.update()
+
+    def _on_show_axes_changed(self, visible: bool) -> None:
+        self._show_axes = visible
+        self.update()
+
+    def _on_show_datum_symbol_changed(self, visible: bool) -> None:
+        self._show_datum_symbol = visible
         self.update()
 
     # ── Mouse & touch interaction ─────────────────────────────────────────────
