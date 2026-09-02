@@ -7,25 +7,31 @@ material texture is sampled directly on the GPU.
 
 OpenGL 3.3 core profile compatible (sampler3D + gl_FragDepth).
 
+Rendering design
+----------------
+The march starts ONE step (0.8 voxels) INSIDE the AABB instead of at the
+exact boundary face.  This has two effects the user can see:
+
+  1. The "ghost outer shell" disappears: the raymarcher never renders the
+     outermost voxel layer as a flat plane.  The stock boundary is always
+     slightly inside the AABB, so what is rendered is always a surface that
+     has carved neighbours on at least one side.
+
+  2. Normal robustness: the central-difference normal samples at uvw ± e
+     (1.5 voxels offset).  Starting one step inside guarantees at least one
+     valid in-bounds sample on every side, so the gradient is never zero
+     due to a boundary clamp artefact.
+
+mat_at() returns 0.0 (air) for any UVW outside [0, 1]³ — equivalent to
+GL_CLAMP_TO_BORDER with border colour 0.  This prevents GL_REPEAT wrap
+artefacts (ModernGL default) from leaking into normal computation.
+
 Shading
 -------
-• Blinn-Phong with ambient 0.30, warm material base colour.
-• Secondary fill light from below-left prevents pitch-black back faces.
-• Surface normal via central-difference gradient using mat_at(), which
-  returns 0.0 (air) for samples outside the grid bounds.  This prevents
-  the texture-wrapping artefact that made outer shell voxels dark:
-  GL_REPEAT (ModernGL default) would otherwise wrap the sample to the
-  opposite edge of the texture, producing a near-zero gradient → dark
-  "ghost" hull at the stock boundary.
-• gl_FragDepth is written at the hit point so the tool mesh (rendered
-  afterwards with depth test) correctly occludes / is occluded by the stock.
-
-Extension points (future)
--------------------------
-Physics visualisation
-    Additional sampler units will be added for temperature / stress
-    textures.  The fragment shader will blend material colour with a
-    heat-map or false-colour overlay based on a uniform mode flag.
+• Blinn-Phong with ambient 0.30 so dark faces are never pitch-black.
+• Secondary fill light from below-left softens harsh shadow sides.
+• gl_FragDepth written at hit so the tool mesh depth-tests correctly
+  against the stock.
 """
 from __future__ import annotations
 
@@ -40,8 +46,6 @@ from controller.sim.core.settings    import AppSettings
 
 _VERT = """
 #version 330 core
-// Attribute-less full-screen triangle (positions hard-coded in VS).
-// Covers the entire NDC clip space with a single oversized triangle.
 const vec2 NDC[3] = vec2[3](
     vec2(-1.0, -1.0),
     vec2( 3.0, -1.0),
@@ -55,77 +59,70 @@ void main() {
 _FRAG = """
 #version 330 core
 
-// ── Uniforms ────────────────────────────────────────────────────────────────
-uniform sampler3D u_material;     // r8 — 1.0 = workpiece, 0.0 = air
-uniform mat4      u_mvp;          // for writing gl_FragDepth at hit point
-uniform mat4      u_inv_mvp;      // for reconstructing world-space ray
-uniform vec3      u_cam_pos;      // world-space camera eye
-uniform vec2      u_viewport;     // (width, height) in pixels
-uniform vec3      u_grid_origin;  // world mm — bbox min corner
-uniform vec3      u_grid_size;    // world mm — bbox extents
-uniform float     u_voxel_size;   // mm per voxel edge
+// ── Uniforms ─────────────────────────────────────────────────────────────────
+uniform sampler3D u_material;
+uniform mat4      u_mvp;
+uniform mat4      u_inv_mvp;
+uniform vec3      u_cam_pos;
+uniform vec2      u_viewport;
+uniform vec3      u_grid_origin;
+uniform vec3      u_grid_size;
+uniform float     u_voxel_size;
+uniform vec3      u_base_color;
 
-// ── Material / lighting ───────────────────────────────────────────────────────
-uniform vec3 u_base_color;                                    // set from AppSettings
+// ── Lighting ──────────────────────────────────────────────────────────────────
+const vec3  LIGHT_DIR = normalize(vec3( 0.50,  0.70, 1.00));
+const vec3  FILL_DIR  = normalize(vec3(-0.40, -0.60, 0.50));
+const float AMBIENT   = 0.30;
+const float FILL_STR  = 0.22;
+const float SPEC_POW  = 24.0;
+const float SPEC_STR  = 0.28;
 
-// Main key light — slightly off-centre from above, angled toward viewer
-const vec3  LIGHT_DIR  = normalize(vec3( 0.50,  0.70, 1.00));
-// Soft fill light from below-left — prevents pitch-black back faces
-const vec3  FILL_DIR   = normalize(vec3(-0.40, -0.60, 0.50));
-const float AMBIENT    = 0.30;    // raised from 0.15 so dark faces are not pitch black
-const float FILL_STR   = 0.22;   // secondary fill contribution (0 = fill light off)
-const float SPEC_POW   = 24.0;
-const float SPEC_STR   = 0.28;
-
-// ── Marching parameters ───────────────────────────────────────────────────────
-// Step = 0.8 voxel for sub-voxel precision without too many iterations.
-// 1024 max iterations handles grids up to ~900 voxels along the diagonal.
+// ── March ─────────────────────────────────────────────────────────────────────
 const int   MAX_STEPS   = 1024;
 const float STEP_FACTOR = 0.8;
 
 out vec4 fragColor;
 
-// ── Boundary-safe material sampler ───────────────────────────────────────────
-// Returns 0.0 (air) for any UVW outside [0, 1]^3.
-//
-// Why this matters:
-//   ModernGL Texture3D defaults to GL_REPEAT.  Without this guard, the
-//   normal computation at an outermost stock voxel would sample the texture
-//   at uvw ± e where one component crosses 0 or 1, wrapping to the OPPOSITE
-//   side of the stock.  That produces a near-zero gradient → near-zero normal
-//   → almost no diffuse contribution → the outer shell looks dark / opaque
-//   but visually indistinguishable from transparent.  Fragments behind it
-//   shine through as "fractal" artefacts.
+// ── Boundary-safe sampler ─────────────────────────────────────────────────────
+// Returns 0.0 (air) for any UVW strictly outside [0, 1]^3.
+// Prevents GL_REPEAT wrap-around artefacts in the normal computation.
 float mat_at(vec3 uvw_s) {
-    if (any(lessThan(uvw_s, vec3(0.0))) || any(greaterThan(uvw_s, vec3(1.0))))
+    if (any(lessThan   (uvw_s, vec3(0.0))) ||
+        any(greaterThan(uvw_s, vec3(1.0))))
         return 0.0;
     return texture(u_material, uvw_s).r;
 }
 
 void main() {
-    // ── Ray reconstruction via inverse MVP ───────────────────────────────────
-    vec2 ndc     = (gl_FragCoord.xy / u_viewport) * 2.0 - 1.0;
-    vec4 near_h  = u_inv_mvp * vec4(ndc, -1.0, 1.0);
-    vec4 far_h   = u_inv_mvp * vec4(ndc,  1.0, 1.0);
+    // ── Reconstruct view ray from inverse MVP ─────────────────────────────────
+    vec2 ndc    = (gl_FragCoord.xy / u_viewport) * 2.0 - 1.0;
+    vec4 near_h = u_inv_mvp * vec4(ndc, -1.0, 1.0);
+    vec4 far_h  = u_inv_mvp * vec4(ndc,  1.0, 1.0);
     near_h /= near_h.w;
     far_h  /= far_h.w;
 
     vec3 ray_dir = normalize(far_h.xyz - near_h.xyz);
     vec3 ray_o   = u_cam_pos;
 
-    // ── Ray vs AABB (slab method) ─────────────────────────────────────────────
+    // ── Ray vs AABB (slab test) ───────────────────────────────────────────────
     vec3 inv_dir = 1.0 / ray_dir;
-    vec3 t0s     = (u_grid_origin              - ray_o) * inv_dir;
-    vec3 t1s     = (u_grid_origin + u_grid_size - ray_o) * inv_dir;
-    vec3 tmins   = min(t0s, t1s);
-    vec3 tmaxs   = max(t0s, t1s);
+    vec3 t0s   = (u_grid_origin                - ray_o) * inv_dir;
+    vec3 t1s   = (u_grid_origin + u_grid_size  - ray_o) * inv_dir;
+    vec3 tmins = min(t0s, t1s);
+    vec3 tmaxs = max(t0s, t1s);
     float tenter = max(max(tmins.x, tmins.y), tmins.z);
     float texit  = min(min(tmaxs.x, tmaxs.y), tmaxs.z);
 
     if (texit < 0.0 || tenter > texit) discard;
 
-    float t    = max(tenter, 0.0);
     float step = u_voxel_size * STEP_FACTOR;
+
+    // Start ONE step inside the AABB instead of at the exact boundary face.
+    // This prevents the outermost voxel layer from rendering as a flat plane
+    // ("ghost box" artefact).  With a 5 mm stock margin and 0.5 mm voxels
+    // the stock appears indistinguishable from its nominal size.
+    float t = max(tenter, 0.0) + step;
 
     // ── Raymarching loop ──────────────────────────────────────────────────────
     for (int i = 0; i < MAX_STEPS; i++) {
@@ -137,17 +134,9 @@ void main() {
         float mat = mat_at(uvw);
 
         if (mat > 0.5) {
-            // ── Surface normal via central-difference gradient ─────────────────
-            // Offset = 1.5 voxels in UVW space for a robust sub-surface sample.
-            //
-            // Gradient direction: mat_at(uvw - e) - mat_at(uvw + e)
-            //   → OUTWARD-pointing normal (from solid into air).
-            //   → mat_at() returns 0 outside [0,1], so outer boundary voxels get
-            //      a clean outward gradient instead of a wrap-around artefact.
-            //
-            // Zero-gradient guard: when all neighbours have identical density
-            // (e.g. a fully enclosed interior voxel) the gradient is 0.  In that
-            // case fall back to the view direction so the pixel still shades.
+            // ── Central-difference surface normal ─────────────────────────────
+            // mat_at returns 0 for out-of-bounds → outward-pointing gradient
+            // at boundary voxels without wrap artefacts.
             vec3 e = vec3(
                 1.5 * u_voxel_size / u_grid_size.x,
                 1.5 * u_voxel_size / u_grid_size.y,
@@ -158,20 +147,21 @@ void main() {
                 mat_at(uvw - vec3(0.0, e.y, 0.0)) - mat_at(uvw + vec3(0.0, e.y, 0.0)),
                 mat_at(uvw - vec3(0.0, 0.0, e.z)) - mat_at(uvw + vec3(0.0, 0.0, e.z))
             );
-            float grad_len = length(grad);
-            vec3 n = (grad_len > 1e-4) ? (grad / grad_len) : normalize(u_cam_pos - pos);
+            // Guard against zero-length gradient (fully enclosed voxel):
+            // fall back to camera direction for a non-black result.
+            float g_len = length(grad);
+            vec3 n = (g_len > 1e-4) ? (grad / g_len) : normalize(u_cam_pos - pos);
 
-            // ── Blinn-Phong shading ────────────────────────────────────────────
-            vec3 V    = normalize(u_cam_pos - pos);
-            vec3 H    = normalize(LIGHT_DIR + V);
-
-            float diff  = max(dot(n, LIGHT_DIR), 0.0);
-            float fill  = max(dot(n, FILL_DIR),  0.0) * FILL_STR;
-            float spec  = pow(max(dot(n, H),     0.0), SPEC_POW) * SPEC_STR;
+            // ── Blinn-Phong shading ───────────────────────────────────────────
+            vec3  V    = normalize(u_cam_pos - pos);
+            vec3  H    = normalize(LIGHT_DIR + V);
+            float diff = max(dot(n, LIGHT_DIR), 0.0);
+            float fill = max(dot(n, FILL_DIR),  0.0) * FILL_STR;
+            float spec = pow(max(dot(n, H),     0.0), SPEC_POW) * SPEC_STR;
 
             vec3 color = u_base_color * (AMBIENT + diff + fill) + vec3(spec);
 
-            // ── Depth: write correct value so tool/path depth-test works ──────
+            // ── Write correct fragment depth ──────────────────────────────────
             vec4 clip = u_mvp * vec4(pos, 1.0);
             gl_FragDepth = (clip.z / clip.w) * 0.5 + 0.5;
 
@@ -182,7 +172,7 @@ void main() {
         t += step;
     }
 
-    discard;   // ray passed through without hitting material → transparent
+    discard;
 }
 """
 
@@ -195,13 +185,6 @@ class VoxelRenderer:
 
     Must be constructed with the GL context current (called from
     ``DatumSimWidget._create_voxel_sim()``).
-
-    Parameters
-    ----------
-    ctx :
-        Active ModernGL context.
-    grid :
-        The voxel grid whose ``texture`` is rendered.
     """
 
     def __init__(self, ctx: moderngl.Context, grid: GpuVoxelGrid) -> None:
@@ -209,36 +192,19 @@ class VoxelRenderer:
         self._grid = grid
 
         self._prog = ctx.program(vertex_shader=_VERT, fragment_shader=_FRAG)
-
-        # Full-screen triangle — no vertex attributes needed
         self._vao  = ctx.vertex_array(self._prog, [])
 
-        # Sync colour from settings and listen for live changes
         self._s = AppSettings.instance()
         self._apply_color(self._s.voxel_color_rgb())
         self._s.voxel_color_changed.connect(
             lambda _name: self._apply_color(self._s.voxel_color_rgb())
         )
 
-    # ── Public interface ──────────────────────────────────────────────────────
-
     def _apply_color(self, rgb: tuple[float, float, float]) -> None:
-        """Write the base colour uniform (can be called outside paintGL)."""
         self._prog["u_base_color"].value = rgb
 
     def render(self, mvp: np.ndarray, cam_pos: np.ndarray) -> None:
-        """
-        Render the voxel stock into the currently bound framebuffer.
-
-        Parameters
-        ----------
-        mvp :
-            (4, 4) float32 model-view-projection matrix (column-major).
-        cam_pos :
-            (3,) float32 world-space camera eye position.
-
-        Must be called from inside ``paintGL`` with the GL context current.
-        """
+        """Render the voxel stock.  Must be called inside paintGL."""
         bbox = self._grid.bbox
         vs   = self._grid.voxel_size
 
@@ -255,15 +221,11 @@ class VoxelRenderer:
         self._prog["u_grid_size"].write(bbox.size().tobytes())
         self._prog["u_voxel_size"].value = float(vs)
 
-        # Bind material texture to unit 0
         self._grid.texture.use(location=0)
         self._prog["u_material"].value = 0
 
-        # Standard depth test — fragments only land if they are in front of
-        # any previously drawn geometry (path lines, earlier stock pixels).
         self._vao.render(moderngl.TRIANGLES, vertices=3)
 
     def release(self) -> None:
-        """Release GPU shader resources."""
         self._prog.release()
         self._vao.release()
