@@ -27,7 +27,8 @@ from __future__ import annotations
 import numpy as np
 import moderngl
 
-from controller.sim.voxel.gpu_grid import GpuVoxelGrid
+from controller.sim.voxel.gpu_grid   import GpuVoxelGrid
+from controller.sim.core.settings    import AppSettings
 
 
 # ── GLSL source ───────────────────────────────────────────────────────────────
@@ -59,8 +60,8 @@ uniform vec3      u_grid_origin;  // world mm — bbox min corner
 uniform vec3      u_grid_size;    // world mm — bbox extents
 uniform float     u_voxel_size;   // mm per voxel edge
 
-// ── Material / lighting constants ────────────────────────────────────────────
-const vec3  BASE_COLOR  = vec3(0.72, 0.65, 0.56);   // warm aluminium
+// ── Material / lighting ───────────────────────────────────────────────────────
+uniform vec3 u_base_color;                           // set from AppSettings
 const vec3  LIGHT_DIR   = normalize(vec3(0.55, 0.80, 1.0));
 const float AMBIENT     = 0.15;
 const float SPEC_POW    = 32.0;
@@ -131,7 +132,7 @@ void main() {
             float diff = max(dot(n, LIGHT_DIR), 0.0);
             float spec = pow(max(dot(n, H),    0.0), SPEC_POW) * SPEC_STR;
 
-            vec3 color = BASE_COLOR * (AMBIENT + diff) + vec3(spec);
+            vec3 color = u_base_color * (AMBIENT + diff) + vec3(spec);
 
             // ── Depth: write correct value so tool/path depth-test works ──────
             vec4 clip = u_mvp * vec4(pos, 1.0);
@@ -175,7 +176,18 @@ class VoxelRenderer:
         # Full-screen triangle — no vertex attributes needed
         self._vao  = ctx.vertex_array(self._prog, [])
 
+        # Sync colour from settings and listen for live changes
+        self._s = AppSettings.instance()
+        self._apply_color(self._s.voxel_color_rgb())
+        self._s.voxel_color_changed.connect(
+            lambda _name: self._apply_color(self._s.voxel_color_rgb())
+        )
+
     # ── Public interface ──────────────────────────────────────────────────────
+
+    def _apply_color(self, rgb: tuple[float, float, float]) -> None:
+        """Write the base colour uniform (can be called outside paintGL)."""
+        self._prog["u_base_color"].value = rgb
 
     def render(self, mvp: np.ndarray, cam_pos: np.ndarray) -> None:
         """

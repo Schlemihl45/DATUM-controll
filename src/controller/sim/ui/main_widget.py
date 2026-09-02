@@ -172,6 +172,7 @@ class DatumSimWidget(QWidget):
                 carver           = carver,
                 path_points      = self._last_program.path.points,
                 path_arc_lengths = self._last_program.path.arc_lengths,
+                path_feed_rates  = self._last_program.path.feed_rates,
                 tool             = self._current_tool or get_tool(1),
             )
 

@@ -54,12 +54,14 @@ class VoxelSimController:
         carver:           VoxelCarver,
         path_points:      np.ndarray,
         path_arc_lengths: np.ndarray,
+        path_feed_rates:  np.ndarray,
         tool:             ToolDefinition,
     ) -> None:
         self._grid            = grid
         self._carver          = carver
         self._pts             = path_points       # (N, 3) float32
         self._arc             = path_arc_lengths  # (N,)   float32
+        self._feeds           = path_feed_rates   # (N,)   float32 — 0.0 = G0 rapid
         self._tool            = tool
 
         # High-Water-Mark: last carved arc-length and corresponding path index
@@ -97,6 +99,11 @@ class VoxelSimController:
 
         carved_any = False
         for i in range(self._max_idx, new_idx):
+            # Skip G0 rapid moves — feed_rate == 0.0 marks rapid segments.
+            # The segment from point i to i+1 is rapid if EITHER endpoint
+            # has feed_rate 0 (conservative: skip if the move started rapid).
+            if self._feeds[i] == 0.0:
+                continue
             self._carver.carve_segment(
                 self._pts[i],
                 self._pts[i + 1],

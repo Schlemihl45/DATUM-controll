@@ -47,15 +47,25 @@ class BoundingBox:
 
     @staticmethod
     def from_path_buffer(path, margin_mm: float = 5.0) -> "BoundingBox":
-        """Derive bbox from a compiled path's point buffer + padding."""
-        pts = path.points  # (N, 3) float32
+        """Derive bbox from cutting moves only (G1/G2/G3 — feed_rate > 0).
+
+        G0 rapid moves are excluded: they travel above the workpiece and
+        would inflate the bounding box with air-clearance positions.
+        Falls back to all points if no cutting move is found.
+        """
+        pts   = path.points      # (N, 3) float32
+        feeds = path.feed_rates  # (N,)   float32  — 0.0 = rapid (G0)
+
+        mask = feeds > 0.0
+        cutting_pts = pts[mask] if mask.any() else pts   # fallback: all
+
         return BoundingBox(
-            x_min=float(pts[:, 0].min()) - margin_mm,
-            x_max=float(pts[:, 0].max()) + margin_mm,
-            y_min=float(pts[:, 1].min()) - margin_mm,
-            y_max=float(pts[:, 1].max()) + margin_mm,
-            z_min=float(pts[:, 2].min()) - margin_mm,
-            z_max=float(pts[:, 2].max()) + margin_mm,
+            x_min=float(cutting_pts[:, 0].min()) - margin_mm,
+            x_max=float(cutting_pts[:, 0].max()) + margin_mm,
+            y_min=float(cutting_pts[:, 1].min()) - margin_mm,
+            y_max=float(cutting_pts[:, 1].max()) + margin_mm,
+            z_min=float(cutting_pts[:, 2].min()) - margin_mm,
+            z_max=float(cutting_pts[:, 2].max()) + margin_mm,
         )
 
     # ── Geometry queries ──────────────────────────────────────────────────────

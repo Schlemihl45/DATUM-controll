@@ -40,6 +40,19 @@ class AppSettings(QObject):
 
     voxel_size_changed    = Signal(float)
     voxel_enabled_changed = Signal(bool)
+    voxel_color_changed   = Signal(str)
+
+    # ── Voxel colour presets ───────────────────────────────────────────────────
+    VOXEL_COLORS: dict[str, tuple[float, float, float]] = {
+        "Orange-Gelb":  (0.95, 0.68, 0.12),
+        "Koralle":      (0.92, 0.38, 0.25),
+        "Hellblau":     (0.30, 0.62, 0.92),
+        "Mintgrün":     (0.22, 0.78, 0.55),
+        "Violett":      (0.58, 0.35, 0.85),
+        "Aluminium":    (0.72, 0.65, 0.56),
+        "Stahl":        (0.55, 0.57, 0.60),
+        "Holz":         (0.76, 0.60, 0.35),
+    }
 
     # Singleton ────────────────────────────────────────────────────────────────
     _instance: "AppSettings | None" = None
@@ -237,3 +250,17 @@ class AppSettings(QObject):
     def voxel_enabled(self, v: bool) -> None:
         self._qs.setValue("sim/voxel_enabled", bool(v))
         self.voxel_enabled_changed.emit(bool(v))
+
+    @property
+    def voxel_color(self) -> str:
+        """Name key from VOXEL_COLORS. Default: 'Orange-Gelb'."""
+        return self._qs.value("sim/voxel_color", "Orange-Gelb", type=str)
+
+    @voxel_color.setter
+    def voxel_color(self, name: str) -> None:
+        self._qs.setValue("sim/voxel_color", name)
+        self.voxel_color_changed.emit(name)
+
+    def voxel_color_rgb(self) -> tuple[float, float, float]:
+        """Current voxel colour as (r, g, b) floats 0–1."""
+        return self.VOXEL_COLORS.get(self.voxel_color, (0.95, 0.68, 0.12))

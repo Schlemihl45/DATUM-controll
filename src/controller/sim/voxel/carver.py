@@ -122,8 +122,10 @@ class VoxelCarver:
 
             # Per z-slice: check tool profile radius
             for iz_local in range(lz):
-                # Depth below tool tip (positive = inside cutting zone)
-                local_z = tz - float(zs[iz_local])
+                # Height above tool tip (z=0 at tip, increases toward shank).
+                # profile_radius_at() uses the same convention:
+                #   z=0 → tip contact, z>0 → up into the flute.
+                local_z = float(zs[iz_local]) - tz
                 if local_z < 0.0 or local_z > cut_len:
                     continue
                 r_at_z  = tool.profile_radius_at(local_z)
