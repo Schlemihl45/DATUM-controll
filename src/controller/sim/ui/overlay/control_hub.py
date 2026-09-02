@@ -1,9 +1,23 @@
 """
 sim/ui/overlay/control_hub.py — Floating playback-control bar.
 
-Overlaid at the bottom-centre of DatumSimWidget. Paints its own dark
-rounded background so it is always legible regardless of what the
-OpenGL viewport renders behind it.
+Overlaid at the bottom-centre of DatumSimWidget.  No container background —
+the widget is fully transparent; each info-label chip carries its own dark
+rounded pill, and the play/stop buttons are icon-only with a subtle hover glow.
+
+Layout
+------
+Controls-only (all info labels hidden):
+    [8 px top] [buttons ─ stretch ─ slider ─ stretch] [8 px bottom]
+
+Controls + any info label active:
+    [8 px] [buttons ─ stretch ─ slider ─ stretch]
+    [8 px] [datum  gcode-line…  tool  feedrate]
+    [8 px]
+
+Equal 8 px gaps above, between, and below give an evenly-spaced look.
+The widget height adjusts automatically whenever info-label visibility changes;
+``layout_changed`` is emitted so the parent can reposition.
 
 Speed slider — bidirectional:
   • Centre (value = 0)   → paused / frozen at current position
@@ -18,24 +32,21 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QPoint, QSize, Signal
-from PySide6.QtGui import (
-    QBrush, QColor, QFont, QIcon, QPainter, QPen,
-)
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
     QSlider,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from controller.sim.core.settings import AppSettings
 
-# Resolve icon directory relative to this file
-_ICONS_DIR = Path(__file__).resolve().parents[3] / "assets" / "icons"
+# Icons live in the shared resources folder (parents[3] = src/controller/)
+_ICONS_DIR = Path(__file__).resolve().parents[3] / "ui" / "resources" / "icons"
 
 # WCS index → G-word label
 _WCS_NAMES = {
@@ -52,8 +63,7 @@ _SNAP_ONE_LOW   =   80    # snap to 100 if value in [80, 150]
 _SNAP_ONE_HIGH  =  150
 
 # ── Per-widget inline styles (dark overlay aesthetic) ─────────────────────────
-# These are intentionally self-contained so the overlay looks the same
-# regardless of which app-level QSS theme is active.
+# Self-contained so the overlay looks the same regardless of the app QSS theme.
 
 _LABEL_STYLE = """
 QLabel {
@@ -109,14 +119,10 @@ QSlider::handle:horizontal:hover { background: #FFFFFF; }
 """
 
 
-# ── Helper: load SVG icon with explicit colour rendering ─────────────────────
+# ── Helper: load SVG icon ─────────────────────────────────────────────────────
 
 def _svg_icon(name: str, size: int = 24) -> QIcon:
-    """Load an SVG from the assets/icons/ directory and render it to a QIcon.
-
-    Uses QSvgRenderer → QPixmap so the embedded stroke/fill colours in the
-    SVG are respected regardless of the platform icon theme.
-    """
+    """Load an SVG from the shared resources/icons/ directory into a QIcon."""
     from PySide6.QtGui import QPixmap
     from PySide6.QtSvg import QSvgRenderer
 
@@ -237,8 +243,10 @@ class SpeedSlider(QSlider):
 class ControlHub(QWidget):
     """Bottom-centre floating playback and info bar for DatumSimWidget.
 
-    Paints its own rounded dark background so icons are legible over the
-    OpenGL viewport without needing WA_TranslucentBackground on the parent.
+    Fully transparent — no container background painted.  Width is fixed at
+    520 px; height adjusts automatically when info-label visibility changes.
+    ``layout_changed`` is emitted after each resize so the parent can
+    reposition the widget.
     """
 
     play_clicked          = Signal()
@@ -247,19 +255,17 @@ class ControlHub(QWidget):
     skip_forward_clicked  = Signal()
     skip_backward_clicked = Signal()
     speed_changed         = Signal(float)   # −10.0 … +20.0
-
-    _BG_COLOR = QColor(18, 18, 20, 215)
-    _BORDER   = QColor(255, 255, 255, 22)
+    layout_changed        = Signal()        # emitted when height changes
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(520, 105)
+        self.setFixedWidth(520)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._state = 0    # 0 = stopped/paused icon, 1 = playing icon
         self._s     = AppSettings.instance()
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 10)
+        root.setContentsMargins(0, 8, 0, 8)
         root.setSpacing(8)
 
         # ── Playback control row ───────────────────────────────────────────────
@@ -295,43 +301,38 @@ class ControlHub(QWidget):
         btn_row.addStretch()
         root.addLayout(btn_row)
 
-        # ── Info row ──────────────────────────────────────────────────────────
-        info_row = QHBoxLayout()
+        # ── Info container (transparent, hidden when all labels are off) ───────
+        self._info_container = QWidget(self)
+        self._info_container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        info_row = QHBoxLayout(self._info_container)
+        info_row.setContentsMargins(0, 0, 0, 0)
         info_row.setSpacing(6)
 
-        self._datum_lbl = QLabel("G54", self)
+        self._datum_lbl = QLabel("G54", self._info_container)
         self._datum_lbl.setFixedWidth(54)
         self._datum_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._datum_lbl.setStyleSheet(_LABEL_STYLE)
 
-        self._gcode_line   = GCodeLine(self)
-        self._gcode_line.setStyleSheet(_LABEL_STYLE)
-        self._gcode_spacer = QWidget(self)
-        self._gcode_spacer.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
-        )
-        self._gcode_stack = QStackedWidget(self)
-        self._gcode_stack.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
-        )
-        self._gcode_stack.addWidget(self._gcode_line)    # 0
-        self._gcode_stack.addWidget(self._gcode_spacer)  # 1
+        self._gcode_lbl = GCodeLine(self._info_container)
+        self._gcode_lbl.setStyleSheet(_LABEL_STYLE)
 
-        self._tool_lbl = QLabel("T1", self)
+        self._tool_lbl = QLabel("T1", self._info_container)
         self._tool_lbl.setFixedWidth(40)
         self._tool_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._tool_lbl.setStyleSheet(_LABEL_STYLE)
 
-        self._feed_lbl = QLabel("F  0", self)
+        self._feed_lbl = QLabel("F  0", self._info_container)
         self._feed_lbl.setFixedWidth(90)
         self._feed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._feed_lbl.setStyleSheet(_LABEL_STYLE)
 
         info_row.addWidget(self._datum_lbl)
-        info_row.addWidget(self._gcode_stack)
+        info_row.addWidget(self._gcode_lbl)
         info_row.addWidget(self._tool_lbl)
         info_row.addWidget(self._feed_lbl)
-        root.addLayout(info_row)
+
+        root.addWidget(self._info_container)
 
         # Initial visibility from settings
         self._apply_visibility(
@@ -348,36 +349,55 @@ class ControlHub(QWidget):
             lambda v: self.speed_changed.emit(v / 100.0)
         )
 
-        self._s.show_gcode_line_changed.connect(self._on_show_gcode_changed)
-        self._s.show_datum_changed.connect(self._datum_lbl.setVisible)
-        self._s.show_tool_changed.connect(self._tool_lbl.setVisible)
-        self._s.show_feedrate_changed.connect(self._feed_lbl.setVisible)
+        self._s.show_gcode_line_changed.connect(self._on_gcode_vis)
+        self._s.show_datum_changed.connect(self._on_datum_vis)
+        self._s.show_tool_changed.connect(self._on_tool_vis)
+        self._s.show_feedrate_changed.connect(self._on_feedrate_vis)
 
-    # ── Background painting ───────────────────────────────────────────────────
-
-    def paintEvent(self, event) -> None:
-        """Draw the dark rounded background behind all child widgets."""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QBrush(self._BG_COLOR))
-        painter.setPen(QPen(self._BORDER, 1))
-        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
-
-    # ── Visibility ────────────────────────────────────────────────────────────
+    # ── Visibility management ─────────────────────────────────────────────────
 
     def _apply_visibility(self, gcode: bool, datum: bool, tool: bool, feedrate: bool) -> None:
-        self._gcode_stack.setCurrentIndex(0 if gcode else 1)
+        self._gcode_lbl.setVisible(gcode)
         self._datum_lbl.setVisible(datum)
         self._tool_lbl.setVisible(tool)
         self._feed_lbl.setVisible(feedrate)
+        self._sync_info()
 
-    def _on_show_gcode_changed(self, visible: bool) -> None:
-        self._gcode_stack.setCurrentIndex(0 if visible else 1)
+    def _sync_info(self) -> None:
+        """Show info container iff any label is visible; resize and notify parent."""
+        any_vis = (
+            self._datum_lbl.isVisible()
+            or self._gcode_lbl.isVisible()
+            or self._tool_lbl.isVisible()
+            or self._feed_lbl.isVisible()
+        )
+        self._info_container.setVisible(any_vis)
+        # Resize to correct height without changing the fixed width
+        new_h = self.sizeHint().height()
+        if new_h > 0 and new_h != self.height():
+            self.resize(self.width(), new_h)
+            self.layout_changed.emit()
+
+    def _on_gcode_vis(self, visible: bool) -> None:
+        self._gcode_lbl.setVisible(visible)
+        self._sync_info()
+
+    def _on_datum_vis(self, visible: bool) -> None:
+        self._datum_lbl.setVisible(visible)
+        self._sync_info()
+
+    def _on_tool_vis(self, visible: bool) -> None:
+        self._tool_lbl.setVisible(visible)
+        self._sync_info()
+
+    def _on_feedrate_vis(self, visible: bool) -> None:
+        self._feed_lbl.setVisible(visible)
+        self._sync_info()
 
     # ── Data setters ──────────────────────────────────────────────────────────
 
     def set_gcode(self, raw_text: str) -> None:
-        self._gcode_line.set_gcode(raw_text)
+        self._gcode_lbl.set_gcode(raw_text)
 
     def set_datum(self, wcs_index: int) -> None:
         self._datum_lbl.setText(_WCS_NAMES.get(wcs_index, f"G{wcs_index}"))

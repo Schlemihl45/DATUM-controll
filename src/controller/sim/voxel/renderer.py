@@ -72,9 +72,7 @@ uniform vec3      u_base_color;
 
 // ── Lighting ──────────────────────────────────────────────────────────────────
 const vec3  LIGHT_DIR = normalize(vec3( 0.50,  0.70, 1.00));
-const vec3  FILL_DIR  = normalize(vec3(-0.40, -0.60, 0.50));
 const float AMBIENT   = 0.30;
-const float FILL_STR  = 0.22;
 const float SPEC_POW  = 24.0;
 const float SPEC_STR  = 0.28;
 
@@ -156,10 +154,9 @@ void main() {
             vec3  V    = normalize(u_cam_pos - pos);
             vec3  H    = normalize(LIGHT_DIR + V);
             float diff = max(dot(n, LIGHT_DIR), 0.0);
-            float fill = max(dot(n, FILL_DIR),  0.0) * FILL_STR;
             float spec = pow(max(dot(n, H),     0.0), SPEC_POW) * SPEC_STR;
 
-            vec3 color = u_base_color * (AMBIENT + diff + fill) + vec3(spec);
+            vec3 color = u_base_color * (AMBIENT + diff) + vec3(spec);
 
             // ── Write correct fragment depth ──────────────────────────────────
             vec4 clip = u_mvp * vec4(pos, 1.0);

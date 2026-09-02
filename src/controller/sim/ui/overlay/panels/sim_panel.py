@@ -12,7 +12,7 @@ from __future__ import annotations
 from PySide6.QtCore  import Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
-    QLabel, QMessageBox, QTabWidget, QVBoxLayout, QWidget,
+    QLabel, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from controller.sim.core.settings import AppSettings
@@ -146,8 +146,7 @@ class _SimTab(QWidget):
 
     def __init__(self, s: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._s           = s
-        self._sim_running = False
+        self._s = s
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -178,7 +177,7 @@ class _SimTab(QWidget):
         self._size_spin.setToolTip(
             "Kantenlänge eines Voxels.\n"
             "Kleiner = feiner, aber mehr Speicher + langsamer.\n"
-            "Reset erforderlich nach Änderung."
+            "Änderung baut die Simulation sofort neu auf."
         )
         form.addRow("Voxelgröße", self._size_spin)
         root.addLayout(form)
@@ -206,20 +205,7 @@ class _SimTab(QWidget):
         self._sync_size_state()
 
     def _on_size(self, value: float) -> None:
-        if self._sim_running:
-            QMessageBox.information(
-                self, "Voxelgröße geändert",
-                "Die Voxelgröße kann nicht während einer laufenden Simulation "
-                "geändert werden.\nBitte Reset drücken.",
-            )
-            self._size_spin.blockSignals(True)
-            self._size_spin.setValue(self._s.voxel_size)
-            self._size_spin.blockSignals(False)
-            return
         self._s.voxel_size = value
-
-    def set_sim_running(self, running: bool) -> None:
-        self._sim_running = running
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -375,9 +361,8 @@ class SimPanel(QWidget):
     def set_current_tool(self, tool_number: int) -> None:
         """No-op — tools are set exclusively via T-commands in G-code."""
 
-    def set_sim_running(self, running: bool) -> None:
-        """Passed to the Simulation tab to gate live voxel-size changes."""
-        self._sim_tab.set_sim_running(running)
+    def set_sim_running(self, running: bool) -> None:  # noqa: ARG002
+        """Kept for API compatibility — voxel size changes are now always live."""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
