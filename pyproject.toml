@@ -1,12 +1,17 @@
 # ── Build system ──────────────────────────────────────────────────────────────
 # scikit-build-core handles both the CMake C++ extension (voxel_mod) and the
-# Python src-layout package in one pip install -e . step.
-# nanobind must be in the build requirements so CMake can locate it via
-# find_package(nanobind CONFIG REQUIRED).
+# Python src-layout package in one `pip install -e .` step.
+#
+# cmake and ninja are pip-installable — no separate system install needed.
+# nanobind is required by the C++ extension's CMakeLists.txt.
+# If OpenVDB is not found on the system, cmake.optional = true lets
+# scikit-build-core skip the extension and still install the Python package.
 [build-system]
 requires = [
     "scikit-build-core>=0.9",
     "nanobind>=2.0",
+    "cmake>=3.18",
+    "ninja",
 ]
 build-backend = "scikit_build_core.build"
 
@@ -19,7 +24,6 @@ requires-python = ">=3.11"
 
 dependencies = [
     "pyside6>=6.7.0",
-    # 3D G-code viewport — optional at runtime (graceful fallback to SimPlaceholder)
     "moderngl>=5.10.0",
     "numpy>=1.26.0",
 ]
@@ -27,15 +31,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "pytest-qt>=4.4.0",      # Qt-Widget Tests headless
-    "ruff>=0.6.0",            # Linter + Formatter
-    "mypy>=1.11.0",           # Statische Typprüfung
+    "pytest-qt>=4.4.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
     "pre-commit>=3.8.0",
-]
-voxel = [
-    # Install these before pip install -e .[voxel] to enable the C++ extension.
-    # OpenVDB itself is a system library (vcpkg / brew / apt) not a pip package.
-    "nanobind>=2.0",
 ]
 
 [project.scripts]
@@ -43,21 +42,17 @@ datum-control = "controller.main:main"
 
 # ── scikit-build-core ─────────────────────────────────────────────────────────
 [tool.scikit-build]
-# Python source package: src/ layout
+# src-layout: Python package lives in src/controller/
 wheel.packages = ["src/controller"]
 
-# Build type for the C++ extension
+# Release build for the C++ extension
 cmake.build-type = "Release"
 
-# If OpenVDB is not installed, cmake prints a warning but still succeeds
-# (the root CMakeLists.txt only adds the extension when OpenVDB is found).
-# cmake.optional = true would skip the cmake step entirely on failure —
-# we intentionally do NOT set that so the warning is always visible.
-
-# Editable installs: rebuild the extension on every pip install -e .
-# Set to "redirect" (default) for fast rebuilds without reinstalling.
-editable.mode = "redirect"
-editable.rebuild = true
+# If OpenVDB is not installed, the root CMakeLists.txt skips the extension
+# (find_package(OpenVDB QUIET) + conditional add_subdirectory).
+# cmake.optional = true means: if cmake itself fails for any reason,
+# scikit-build-core still completes the Python-only install without error.
+cmake.optional = true
 
 # ── Linting / typing ──────────────────────────────────────────────────────────
 [tool.ruff]
@@ -65,12 +60,12 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]  # Standard + Import-Sortierung
+select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
-ignore_missing_imports = true   # linuxcnc hat keine Stubs
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
