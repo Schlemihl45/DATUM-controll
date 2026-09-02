@@ -28,8 +28,8 @@ from controller.sim.ui.overlay.panels.sim_panel import SimPanel
 STRIP_W = 48    # width of the tab-button strip
 PANEL_W = 280   # width of the expanded content panel
 
-# Icons live alongside the sim package's assets directory
-_ICONS_DIR = Path(__file__).resolve().parents[3] / "assets" / "icons"
+# Icons live in the shared resources folder (parents[3] = src/controller/)
+_ICONS_DIR = Path(__file__).resolve().parents[3] / "ui" / "resources" / "icons"
 
 # ── Strip styles ──────────────────────────────────────────────────────────────
 _FADE_STOP = f"{10 / STRIP_W:.4f}"   # 10px fade relative to strip width

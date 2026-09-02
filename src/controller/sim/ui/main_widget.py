@@ -112,6 +112,8 @@ class DatumSimWidget(QWidget):
         self._render_timer.start()
 
         self._connect_control_hub()
+        # Re-centre the hub whenever its height changes (info row toggled)
+        self.control_hub.layout_changed.connect(self._layout_overlays)
         self._layout_overlays()
 
     # ── File loading ──────────────────────────────────────────────────────────
