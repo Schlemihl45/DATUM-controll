@@ -17,8 +17,10 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QLabel,
+    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -110,6 +112,33 @@ class SimPanel(QWidget):
         self._chk_tool.toggled.connect(self._on_tool_toggled)
         self._chk_feedrate.toggled.connect(self._on_feedrate_toggled)
 
+        # ── Voxel simulation settings ────────────────────────────────────────
+        root.addWidget(_section_label("Voxelgröße"))
+        voxel_form = QFormLayout()
+        voxel_form.setContentsMargins(0, 0, 0, 0)
+        voxel_form.setSpacing(8)
+
+        self._voxel_size_spin = QDoubleSpinBox()
+        self._voxel_size_spin.setRange(0.05, 5.0)
+        self._voxel_size_spin.setSingleStep(0.1)
+        self._voxel_size_spin.setDecimals(2)
+        self._voxel_size_spin.setSuffix(" mm")
+        self._voxel_size_spin.setToolTip(
+            "Kantenlänge eines Voxels in mm.\n"
+            "Kleiner = feinere Details, mehr Speicher und langsamere Berechnung.\n"
+            "Änderungen erfordern einen Reset der Simulation."
+        )
+        self._voxel_size_spin.blockSignals(True)
+        self._voxel_size_spin.setValue(self._s.voxel_size)
+        self._voxel_size_spin.blockSignals(False)
+        voxel_form.addRow("Voxelgröße", self._voxel_size_spin)
+        root.addLayout(voxel_form)
+
+        # Internal state: track whether a sim is currently running
+        self._sim_running: bool = False
+
+        self._voxel_size_spin.valueChanged.connect(self._on_voxel_size_changed)
+
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def _load_saved(self) -> None:
@@ -166,6 +195,30 @@ class SimPanel(QWidget):
 
     def _on_feedrate_toggled(self, checked: bool) -> None:
         self._s.show_feedrate = checked
+
+    def _on_voxel_size_changed(self, value: float) -> None:
+        if self._sim_running:
+            QMessageBox.information(
+                self,
+                "Voxelgröße geändert",
+                "Die Voxelgröße kann nicht während einer laufenden Simulation geändert werden.\n"
+                "Bitte Reset drücken, um das Rohteil mit der neuen Auflösung neu aufzubauen.",
+            )
+            # Revert the spinbox to the saved value without triggering the signal
+            self._voxel_size_spin.blockSignals(True)
+            self._voxel_size_spin.setValue(self._s.voxel_size)
+            self._voxel_size_spin.blockSignals(False)
+            return
+        self._s.voxel_size = value
+
+    def set_sim_running(self, running: bool) -> None:
+        """Called by DatumSimWidget to tell the panel whether a sim is active.
+
+        When running=True, voxel_size changes show an info dialog instead of
+        applying immediately (Live-Resize is not supported — Level-Set resolution
+        is fixed at grid creation time).
+        """
+        self._sim_running = running
 
     # ── External setters (called by DatumSimWidget) ───────────────────────────
 
