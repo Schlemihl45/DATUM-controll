@@ -29,6 +29,7 @@ Public interface (mirrors SimPlaceholder so machine_page.py can swap freely):
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import QTimer
@@ -99,6 +100,11 @@ class DatumSimWidget(QWidget):
         self._carve_thread: threading.Thread | None = None
         self._carve_done   = threading.Event()   # set by worker when grid is dirty
         self._carve_abort  = threading.Event()   # set to cancel in-flight carving
+
+        # MACHINE-mode carving: track consecutive positions for segment carving.
+        # Written and read exclusively on the main thread — no lock required.
+        self._last_machine_pos:       np.ndarray | None                    = None
+        self._pending_machine_carve:  tuple[np.ndarray, np.ndarray] | None = None
 
         # ── Signal connections ────────────────────────────────────────────────
         self.settings.sim_panel.tool_mode_changed.connect(self.set_tool_mode)
@@ -299,8 +305,18 @@ class DatumSimWidget(QWidget):
         self._state = state
 
     def set_position(self, x: float, y: float, z: float) -> None:
+        pos = np.array([x, y, z], dtype="f4")
         if self._mode == "MACHINE":
-            self.viewport.set_tool_position(np.array([x, y, z], dtype="f4"))
+            self.viewport.set_tool_position(pos)
+            if self._voxel_ctrl is not None:
+                if self._last_machine_pos is not None:
+                    # Overwrite any pending carve — only the latest endpoint
+                    # matters; the worker always uses the newest position.
+                    self._pending_machine_carve = (
+                        self._last_machine_pos.copy(),
+                        pos.copy(),
+                    )
+                self._last_machine_pos = pos.copy()
 
     def set_line(self, line: int) -> None:
         self.viewport.set_active_line(line)
@@ -313,6 +329,10 @@ class DatumSimWidget(QWidget):
         self.control_hub.set_mode(mode)
         if self._player:
             self._player.reset()
+        # Reset machine-mode position tracking on every transition so we never
+        # accidentally carve a phantom segment from the last known position.
+        self._last_machine_pos      = None
+        self._pending_machine_carve = None
 
     def set_path_mode(self, mode: PathMode) -> None:
         self._path_mode = mode
@@ -362,6 +382,54 @@ class DatumSimWidget(QWidget):
     def sim_set_speed(self, speed: float) -> None:
         if self._player:
             self._player.speed_scale = speed
+
+    def presim_to_s(
+        self,
+        target_s: float,
+        on_done: Callable[[], None] | None = None,
+    ) -> None:
+        """Fast-forward the voxel grid to *target_s* in a background thread.
+
+        Intended for "start program from line X" — pre-carves all material
+        that would have been removed before that line, so the stock state is
+        correct when the program starts.
+
+        Usage::
+
+            s = path.arc[np.searchsorted(path.line_ids, start_line)]
+            widget.presim_to_s(s, on_done=lambda: start_machine())
+
+        The *on_done* callback is invoked on the main thread via
+        ``QTimer.singleShot(0, ...)`` when the background thread completes.
+        """
+        from PySide6.QtCore import QTimer
+
+        if self._voxel_ctrl is None:
+            if on_done:
+                on_done()
+            return
+
+        # Abort any running carve first
+        self._carve_abort.set()
+        if self._carve_thread is not None and self._carve_thread.is_alive():
+            self._carve_thread.join(timeout=0.5)
+        self._carve_abort.clear()
+        self._carve_done.clear()
+
+        ctrl = self._voxel_ctrl
+
+        def _worker() -> None:
+            # Single call — fastest path, no chunking needed for a one-shot
+            # fast-forward.  The UI shows a "preparing" state during this.
+            ctrl.on_tick(target_s)
+            self._carve_done.set()
+            if on_done and not self._carve_abort.is_set():
+                QTimer.singleShot(0, on_done)
+
+        self._carve_thread = threading.Thread(
+            target=_worker, daemon=True, name="presim"
+        )
+        self._carve_thread.start()
 
     # ── ControlHub wiring ─────────────────────────────────────────────────────
 
@@ -429,18 +497,69 @@ class DatumSimWidget(QWidget):
                     )
                     self._carve_thread.start()
 
+        elif self._mode == "MACHINE" and self._voxel_ctrl is not None:
+            # MACHINE mode: carve from real machine positions delivered via
+            # set_position().  Uses the same _carve_done / _carve_abort events
+            # so _teardown_voxel_sim() correctly aborts both worker types.
+            if self._carve_done.is_set():
+                self._carve_done.clear()
+                self.viewport.makeCurrent()
+                self._voxel_ctrl.grid.upload_if_dirty()
+                self.viewport.doneCurrent()
+
+            if (
+                self._pending_machine_carve is not None
+                and (self._carve_thread is None or not self._carve_thread.is_alive())
+            ):
+                start, end = self._pending_machine_carve
+                self._pending_machine_carve = None
+                tool = self._current_tool
+                if tool is not None:
+                    ctrl = self._voxel_ctrl
+                    self._carve_thread = threading.Thread(
+                        target=self._machine_carve_worker,
+                        args=(ctrl, start, end, tool),
+                        daemon=True,
+                        name="machine-carver",
+                    )
+                    self._carve_thread.start()
+
         self.viewport.update()
 
-    def _carve_worker(self, ctrl, s: float) -> None:
-        """Background thread: advance HWM carving up to arc-length *s*.
+    def _carve_worker(self, ctrl: "VoxelSimController", s_target: float) -> None:
+        """Background thread: advance HWM carving to *s_target* in 5 mm chunks.
 
-        Runs entirely off the main thread — no Qt or GL calls allowed here.
-        Sets ``_carve_done`` so ``_tick()`` knows to upload the dirty region
-        to the GPU on the next main-thread frame.
+        Chunking lets the main thread upload and display partial results while
+        the worker is still running, eliminating the visual lag between tool
+        position and carved material at high playback speeds (5×/10×).
+        """
+        CHUNK_MM = 5.0
+        s = ctrl.max_s
+        while s < s_target and not self._carve_abort.is_set():
+            s_next = min(s + CHUNK_MM, s_target)
+            carved = ctrl.on_tick(s_next)
+            if carved and not self._carve_abort.is_set():
+                self._carve_done.set()
+            s = s_next
+
+    def _machine_carve_worker(
+        self,
+        ctrl:  "VoxelSimController",
+        start: "np.ndarray",
+        end:   "np.ndarray",
+        tool:  "ToolDefinition",
+    ) -> None:
+        """Background thread: carve one real-machine move segment.
+
+        Called in MACHINE mode with consecutive position pairs delivered by
+        the machine controller.  No arc-length concept — uses carve_move()
+        directly.
         """
         if self._carve_abort.is_set():
             return
-        carved = ctrl.on_tick(s)
+        # feed_rate=1.0 means "it is a cutting move" — G0 rapid filtering will
+        # be added when MachineController exposes the current feed rate.
+        carved = ctrl.carve_move(start, end, tool, feed_rate=1.0)
         if carved and not self._carve_abort.is_set():
             self._carve_done.set()
 

@@ -136,6 +136,11 @@ class GpuVoxelGrid:
         """CPU material array (Nz, Ny, Nx), uint8.  Read-only from outside."""
         return self._material
 
+    @property
+    def is_dirty(self) -> bool:
+        """True if there is unsynchronised carved data waiting for GPU upload."""
+        return self._dirty
+
     # ── Carving ───────────────────────────────────────────────────────────────
 
     def carve(

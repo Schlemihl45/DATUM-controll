@@ -145,10 +145,13 @@ void main() {
             // ── Central-difference surface normal ─────────────────────────────
             // mat_at returns 0 for out-of-bounds → outward-pointing gradient
             // at boundary voxels without wrap artefacts.
+            // 0.7 voxels: tighter stencil for sharper top/side edge transitions.
+            // (1.5 was previously used to guarantee in-bounds samples; 0.7 still
+            // clears the boundary clamp region while giving crisper normals.)
             vec3 e = vec3(
-                1.5 * u_voxel_size / u_grid_size.x,
-                1.5 * u_voxel_size / u_grid_size.y,
-                1.5 * u_voxel_size / u_grid_size.z
+                0.7 * u_voxel_size / u_grid_size.x,
+                0.7 * u_voxel_size / u_grid_size.y,
+                0.7 * u_voxel_size / u_grid_size.z
             );
             vec3 grad = vec3(
                 mat_at(uvw - vec3(e.x, 0.0, 0.0)) - mat_at(uvw + vec3(e.x, 0.0, 0.0)),
@@ -159,6 +162,15 @@ void main() {
             // fall back to camera direction for a non-black result.
             float g_len = length(grad);
             vec3 n = (g_len > 1e-4) ? (grad / g_len) : normalize(u_cam_pos - pos);
+
+            // Per-voxel grain: breaks up the perfectly flat shading on uncarved
+            // stock surfaces (where grad.x = grad.y = 0 everywhere, giving a
+            // constant normal).  Uses value-noise hash at voxel frequency so
+            // neighbouring voxels have independent variation.
+            float grain_f = 2.0 / u_voxel_size;
+            float gx = fract(sin(dot(pos * grain_f, vec3(127.1, 311.7,  74.7))) * 43758.5) - 0.5;
+            float gy = fract(sin(dot(pos * grain_f, vec3(269.5, 183.3,  91.1))) * 43758.5) - 0.5;
+            n = normalize(n + vec3(gx, gy, 0.0) * 0.04);
 
             // ── Blinn-Phong shading (half-Lambert diffuse) ───────────────────
             vec3  V    = normalize(u_cam_pos - pos);
