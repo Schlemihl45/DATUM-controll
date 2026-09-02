@@ -1,7 +1,16 @@
+# ── Build system ──────────────────────────────────────────────────────────────
+# scikit-build-core handles both the CMake C++ extension (voxel_mod) and the
+# Python src-layout package in one pip install -e . step.
+# nanobind must be in the build requirements so CMake can locate it via
+# find_package(nanobind CONFIG REQUIRED).
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = [
+    "scikit-build-core>=0.9",
+    "nanobind>=2.0",
+]
+build-backend = "scikit_build_core.build"
 
+# ── Project metadata ──────────────────────────────────────────────────────────
 [project]
 name = "cnc-controller"
 version = "0.1.0"
@@ -23,16 +32,40 @@ dev = [
     "mypy>=1.11.0",           # Statische Typprüfung
     "pre-commit>=3.8.0",
 ]
+voxel = [
+    # Install these before pip install -e .[voxel] to enable the C++ extension.
+    # OpenVDB itself is a system library (vcpkg / brew / apt) not a pip package.
+    "nanobind>=2.0",
+]
 
 [project.scripts]
 datum-control = "controller.main:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# ── scikit-build-core ─────────────────────────────────────────────────────────
+[tool.scikit-build]
+# Python source package: src/ layout
+wheel.packages = ["src/controller"]
 
-[tool.setuptools.package-data]
-controller = ["ui/resources/**/*", "sim/assets/**/*"]
+# Build type for the C++ extension
+cmake.build-type = "Release"
 
+# If OpenVDB is not installed, cmake prints a warning but still succeeds
+# (the root CMakeLists.txt only adds the extension when OpenVDB is found).
+# cmake.optional = true would skip the cmake step entirely on failure —
+# we intentionally do NOT set that so the warning is always visible.
+
+# Editable installs: rebuild the extension on every pip install -e .
+# Set to "redirect" (default) for fast rebuilds without reinstalling.
+editable.mode = "redirect"
+editable.rebuild = true
+
+# ── Package data ───────────────────────────────────────────────────────────────
+# scikit-build-core does not read [tool.setuptools.*], so package-data
+# is declared here. MANIFEST.in is the fallback for sdist.
+[tool.scikit-build.wheel.exclude]
+patterns = ["*.pyc", "__pycache__"]
+
+# ── Linting / typing ──────────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 100
 target-version = "py311"
