@@ -1,14 +1,13 @@
 """
 ui/pages/settings_page.py — Application settings page.
 
-A QTabWidget with one tab for now:
+Tabs
+----
+  General    — Theme + 3D viewport background colours
+  Simulation — Voxel material colour, future physics settings
 
-  General
-  ├─ Theme switcher    (dark / light .qss, via ThemeManager)
-  └─ Sim background    (color picker → SimSettings.bg_color)
-
-Additional tabs will be added as features grow. Each tab is a self-contained
-QWidget so they can be moved to separate files without touching this module.
+Each tab is a self-contained QWidget so it can be moved to its own file
+without touching this module.
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -178,13 +178,81 @@ def _section_label(text: str) -> QLabel:
     return lbl
 
 
+# ── Simulation Tab ────────────────────────────────────────────────────────────
+
+class _SimTab(QWidget):
+    """Simulation display settings (voxel colour, future: physics options)."""
+
+    def __init__(
+        self,
+        sim_settings=None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._s = sim_settings
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(20)
+
+        # ── Voxel material colour ─────────────────────────────────────────────
+        root.addWidget(_section_label("Rohteil"))
+
+        if self._s is not None:
+            form = QFormLayout()
+            form.setSpacing(10)
+
+            self._color_combo = QComboBox()
+            self._color_swatch = _ColorSwatch("#f2ae1f")
+
+            # Populate from AppSettings.VOXEL_COLORS dict
+            from controller.sim.core.settings import AppSettings
+            colors = AppSettings.VOXEL_COLORS
+            current_name = self._s.voxel_color
+            for i, name in enumerate(colors):
+                r, g, b = colors[name]
+                hex_val = "#{:02x}{:02x}{:02x}".format(
+                    int(r * 255), int(g * 255), int(b * 255)
+                )
+                self._color_combo.addItem(name, userData=hex_val)
+                if name == current_name:
+                    self._color_combo.setCurrentIndex(i)
+
+            self._update_swatch()
+
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            row.addWidget(self._color_swatch)
+            row.addWidget(self._color_combo)
+            form.addRow("Materialfarbe", row)
+            root.addLayout(form)
+
+            self._color_combo.currentIndexChanged.connect(self._on_color_changed)
+        else:
+            root.addWidget(QLabel(
+                "Simulation nicht verfügbar.",
+                styleSheet="color: #8fa0ba; font-size: 12px;",
+            ))
+
+        root.addStretch()
+
+    def _on_color_changed(self, _index: int) -> None:
+        if self._s is None:
+            return
+        name = self._color_combo.currentText()
+        self._s.voxel_color = name
+        self._update_swatch()
+
+    def _update_swatch(self) -> None:
+        hex_val = self._color_combo.currentData()
+        if hex_val:
+            self._color_swatch.set_color(hex_val)
+
+
 # ── SettingsPage ──────────────────────────────────────────────────────────────
 
 class SettingsPage(QWidget):
     """Application settings page embedded in the main window stack.
-
-    Instantiate this after ThemeManager is created and optionally after
-    the sim package is confirmed importable (pass sim_settings=None if not).
 
     Args:
         theme_manager:  The application ThemeManager instance.
@@ -209,5 +277,9 @@ class SettingsPage(QWidget):
         self._tabs.addTab(
             _GeneralTab(theme_manager, sim_settings, self),
             "General",
+        )
+        self._tabs.addTab(
+            _SimTab(sim_settings, self),
+            "Simulation",
         )
         root.addWidget(self._tabs)
