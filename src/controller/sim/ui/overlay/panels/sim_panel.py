@@ -84,14 +84,28 @@ class _DisplayTab(QWidget):
         inf.addRow("Werkzeug",         self._chk_tool)
         inf.addRow("Vorschub",         self._chk_feedrate)
         root.addLayout(inf)
+
+        # Viewport ───────────────────────────────────────────────────────────
+        root.addWidget(_hdr("Viewport"))
+        vp = QFormLayout(); vp.setSpacing(8)
+        self._chk_axes         = QCheckBox()
+        self._chk_grid         = QCheckBox()
+        self._chk_datum_symbol = QCheckBox()
+        vp.addRow("Achsen (X/Y/Z)",    self._chk_axes)
+        vp.addRow("Gitter (XY-Ebene)", self._chk_grid)
+        vp.addRow("Nullpunkt-Symbol",  self._chk_datum_symbol)
+        root.addLayout(vp)
         root.addStretch()
 
         # Load saved state (no signals yet)
         for chk, val in [
-            (self._chk_datum,    s.show_datum),
-            (self._chk_gcode,    s.show_gcode_line),
-            (self._chk_tool,     s.show_tool),
-            (self._chk_feedrate, s.show_feedrate),
+            (self._chk_datum,         s.show_datum),
+            (self._chk_gcode,         s.show_gcode_line),
+            (self._chk_tool,          s.show_tool),
+            (self._chk_feedrate,      s.show_feedrate),
+            (self._chk_axes,          s.show_axes),
+            (self._chk_grid,          s.show_grid),
+            (self._chk_datum_symbol,  s.show_datum_symbol),
         ]:
             chk.blockSignals(True)
             chk.setChecked(val)
@@ -106,10 +120,13 @@ class _DisplayTab(QWidget):
         # Connect
         self._tool_combo.currentIndexChanged.connect(self._on_tool)
         self._path_combo.currentIndexChanged.connect(self._on_path)
-        self._chk_datum.toggled.connect(   lambda v: setattr(s, "show_datum",      v))
-        self._chk_gcode.toggled.connect(   lambda v: setattr(s, "show_gcode_line", v))
-        self._chk_tool.toggled.connect(    lambda v: setattr(s, "show_tool",       v))
-        self._chk_feedrate.toggled.connect(lambda v: setattr(s, "show_feedrate",   v))
+        self._chk_datum.toggled.connect(        lambda v: setattr(s, "show_datum",        v))
+        self._chk_gcode.toggled.connect(        lambda v: setattr(s, "show_gcode_line",   v))
+        self._chk_tool.toggled.connect(         lambda v: setattr(s, "show_tool",         v))
+        self._chk_feedrate.toggled.connect(     lambda v: setattr(s, "show_feedrate",     v))
+        self._chk_axes.toggled.connect(         lambda v: setattr(s, "show_axes",         v))
+        self._chk_grid.toggled.connect(         lambda v: setattr(s, "show_grid",         v))
+        self._chk_datum_symbol.toggled.connect( lambda v: setattr(s, "show_datum_symbol", v))
 
     def _on_tool(self, idx: int) -> None:
         if 0 <= idx < len(self._TOOL_MODES):

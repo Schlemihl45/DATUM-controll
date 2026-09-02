@@ -30,6 +30,9 @@ class AppSettings(QObject):
     invert_pan_y_changed    = Signal(bool)
     show_grid_changed = Signal(bool)
 
+    show_axes_changed         = Signal(bool)
+    show_datum_symbol_changed = Signal(bool)
+
     show_gcode_line_changed = Signal(bool)
     show_datum_changed = Signal(bool)
     show_tool_changed = Signal(bool)
@@ -181,6 +184,26 @@ class AppSettings(QObject):
     def show_grid(self, v: bool):
         self._qs.setValue("camera/show_grid", v)
         self.show_grid_changed.emit(v)
+
+    @property
+    def show_axes(self) -> bool:
+        """Whether to render the XYZ axis lines. Default True."""
+        return self._qs.value("camera/show_axes", True, type=bool)
+
+    @show_axes.setter
+    def show_axes(self, v: bool) -> None:
+        self._qs.setValue("camera/show_axes", v)
+        self.show_axes_changed.emit(v)
+
+    @property
+    def show_datum_symbol(self) -> bool:
+        """Whether to render the datum origin symbol (quarter-circle). Default True."""
+        return self._qs.value("camera/show_datum_symbol", True, type=bool)
+
+    @show_datum_symbol.setter
+    def show_datum_symbol(self, v: bool) -> None:
+        self._qs.setValue("camera/show_datum_symbol", v)
+        self.show_datum_symbol_changed.emit(v)
 
     @property
     def tool_mode(self) -> str:
