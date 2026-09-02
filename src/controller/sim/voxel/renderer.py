@@ -9,9 +9,14 @@ OpenGL 3.3 core profile compatible (sampler3D + gl_FragDepth).
 
 Shading
 -------
-• Blinn-Phong with ambient 0.15, warm aluminium base colour.
-• Surface normal estimated via central-difference gradient of the
-  material field at the hit voxel.
+• Blinn-Phong with ambient 0.30, warm material base colour.
+• Secondary fill light from below-left prevents pitch-black back faces.
+• Surface normal via central-difference gradient using mat_at(), which
+  returns 0.0 (air) for samples outside the grid bounds.  This prevents
+  the texture-wrapping artefact that made outer shell voxels dark:
+  GL_REPEAT (ModernGL default) would otherwise wrap the sample to the
+  opposite edge of the texture, producing a near-zero gradient → dark
+  "ghost" hull at the stock boundary.
 • gl_FragDepth is written at the hit point so the tool mesh (rendered
   afterwards with depth test) correctly occludes / is occluded by the stock.
 
@@ -61,11 +66,16 @@ uniform vec3      u_grid_size;    // world mm — bbox extents
 uniform float     u_voxel_size;   // mm per voxel edge
 
 // ── Material / lighting ───────────────────────────────────────────────────────
-uniform vec3 u_base_color;                           // set from AppSettings
-const vec3  LIGHT_DIR   = normalize(vec3(0.55, 0.80, 1.0));
-const float AMBIENT     = 0.15;
-const float SPEC_POW    = 32.0;
-const float SPEC_STR    = 0.30;
+uniform vec3 u_base_color;                                    // set from AppSettings
+
+// Main key light — slightly off-centre from above, angled toward viewer
+const vec3  LIGHT_DIR  = normalize(vec3( 0.50,  0.70, 1.00));
+// Soft fill light from below-left — prevents pitch-black back faces
+const vec3  FILL_DIR   = normalize(vec3(-0.40, -0.60, 0.50));
+const float AMBIENT    = 0.30;    // raised from 0.15 so dark faces are not pitch black
+const float FILL_STR   = 0.22;   // secondary fill contribution (0 = fill light off)
+const float SPEC_POW   = 24.0;
+const float SPEC_STR   = 0.28;
 
 // ── Marching parameters ───────────────────────────────────────────────────────
 // Step = 0.8 voxel for sub-voxel precision without too many iterations.
@@ -74,6 +84,23 @@ const int   MAX_STEPS   = 1024;
 const float STEP_FACTOR = 0.8;
 
 out vec4 fragColor;
+
+// ── Boundary-safe material sampler ───────────────────────────────────────────
+// Returns 0.0 (air) for any UVW outside [0, 1]^3.
+//
+// Why this matters:
+//   ModernGL Texture3D defaults to GL_REPEAT.  Without this guard, the
+//   normal computation at an outermost stock voxel would sample the texture
+//   at uvw ± e where one component crosses 0 or 1, wrapping to the OPPOSITE
+//   side of the stock.  That produces a near-zero gradient → near-zero normal
+//   → almost no diffuse contribution → the outer shell looks dark / opaque
+//   but visually indistinguishable from transparent.  Fragments behind it
+//   shine through as "fractal" artefacts.
+float mat_at(vec3 uvw_s) {
+    if (any(lessThan(uvw_s, vec3(0.0))) || any(greaterThan(uvw_s, vec3(1.0))))
+        return 0.0;
+    return texture(u_material, uvw_s).r;
+}
 
 void main() {
     // ── Ray reconstruction via inverse MVP ───────────────────────────────────
@@ -107,36 +134,42 @@ void main() {
         vec3 pos = ray_o + t * ray_dir;
         vec3 uvw = (pos - u_grid_origin) / u_grid_size;
 
-        float mat = texture(u_material, uvw).r;
+        float mat = mat_at(uvw);
 
         if (mat > 0.5) {
-            // ── Surface normal via central-difference gradient ────────────────
-            // Offset = 1.5 voxels in UVW space for robust normal at surface
+            // ── Surface normal via central-difference gradient ─────────────────
+            // Offset = 1.5 voxels in UVW space for a robust sub-surface sample.
+            //
+            // Gradient direction: mat_at(uvw - e) - mat_at(uvw + e)
+            //   → OUTWARD-pointing normal (from solid into air).
+            //   → mat_at() returns 0 outside [0,1], so outer boundary voxels get
+            //      a clean outward gradient instead of a wrap-around artefact.
+            //
+            // Zero-gradient guard: when all neighbours have identical density
+            // (e.g. a fully enclosed interior voxel) the gradient is 0.  In that
+            // case fall back to the view direction so the pixel still shades.
             vec3 e = vec3(
                 1.5 * u_voxel_size / u_grid_size.x,
                 1.5 * u_voxel_size / u_grid_size.y,
                 1.5 * u_voxel_size / u_grid_size.z
             );
-            // Gradient direction: mat(uvw - e) - mat(uvw + e)
-            // This gives an OUTWARD-pointing normal (from solid into air).
-            // The naive (uvw+e)-(uvw-e) would point INTO the material and
-            // produce a near-zero diffuse term → dark cube visual bug.
-            vec3 n = normalize(vec3(
-                texture(u_material, uvw - vec3(e.x, 0.0, 0.0)).r
-                    - texture(u_material, uvw + vec3(e.x, 0.0, 0.0)).r,
-                texture(u_material, uvw - vec3(0.0, e.y, 0.0)).r
-                    - texture(u_material, uvw + vec3(0.0, e.y, 0.0)).r,
-                texture(u_material, uvw - vec3(0.0, 0.0, e.z)).r
-                    - texture(u_material, uvw + vec3(0.0, 0.0, e.z)).r
-            ));
+            vec3 grad = vec3(
+                mat_at(uvw - vec3(e.x, 0.0, 0.0)) - mat_at(uvw + vec3(e.x, 0.0, 0.0)),
+                mat_at(uvw - vec3(0.0, e.y, 0.0)) - mat_at(uvw + vec3(0.0, e.y, 0.0)),
+                mat_at(uvw - vec3(0.0, 0.0, e.z)) - mat_at(uvw + vec3(0.0, 0.0, e.z))
+            );
+            float grad_len = length(grad);
+            vec3 n = (grad_len > 1e-4) ? (grad / grad_len) : normalize(u_cam_pos - pos);
 
             // ── Blinn-Phong shading ────────────────────────────────────────────
             vec3 V    = normalize(u_cam_pos - pos);
             vec3 H    = normalize(LIGHT_DIR + V);
-            float diff = max(dot(n, LIGHT_DIR), 0.0);
-            float spec = pow(max(dot(n, H),    0.0), SPEC_POW) * SPEC_STR;
 
-            vec3 color = u_base_color * (AMBIENT + diff) + vec3(spec);
+            float diff  = max(dot(n, LIGHT_DIR), 0.0);
+            float fill  = max(dot(n, FILL_DIR),  0.0) * FILL_STR;
+            float spec  = pow(max(dot(n, H),     0.0), SPEC_POW) * SPEC_STR;
+
+            vec3 color = u_base_color * (AMBIENT + diff + fill) + vec3(spec);
 
             // ── Depth: write correct value so tool/path depth-test works ──────
             vec4 clip = u_mvp * vec4(pos, 1.0);
@@ -226,12 +259,9 @@ class VoxelRenderer:
         self._grid.texture.use(location=0)
         self._prog["u_material"].value = 0
 
-        # Disable depth writes during the fullscreen pass so the background
-        # geometry is not overwritten by "air" pixels; gl_FragDepth is still
-        # written for hit pixels (discard handles misses).
-        self._ctx.depth_func = "<="    # allow equal depth (surface re-hits)
+        # Standard depth test — fragments only land if they are in front of
+        # any previously drawn geometry (path lines, earlier stock pixels).
         self._vao.render(moderngl.TRIANGLES, vertices=3)
-        self._ctx.depth_func = "<"     # restore default
 
     def release(self) -> None:
         """Release GPU shader resources."""
