@@ -8,10 +8,16 @@ def build_tool_mesh(
         tool: ToolDefinition,
         segments: int = 64,  # Increased from 32 to 64 for smooth roundness
         z_steps: int = 128,  # Increased from 48 to 128 for fine Z resolution (ball nose!)
+        cutting_color: tuple[float, float, float] = (1.0, 0.84, 0.0),  # Gold default
+        shank_color:   tuple[float, float, float] = (0.5, 0.5, 0.5),   # Neutral grey default
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # Returns (vertices, normals, colors)
     """
     Solid of revolution from profile_radius_at(z).
     Returns (vertices, normals, colors) all as float32 arrays.
+
+    *cutting_color*/*shank_color* are baked per-vertex at build time (not a
+    shader uniform) — changing them requires rebuilding the mesh, exactly
+    like changing the tool itself (see Viewport._rebuild_tool_mesh()).
     """
     # Ball and bull endmills get extra resolution dynamically
     # so the tip curvature renders extremely smooth
@@ -27,9 +33,9 @@ def build_tool_mesh(
     norms: list = []
     colors: list = []
 
-    # Color definitions
-    COLOR_CUTTING = [1.0, 0.84, 0.0]  # Gold for cutting flutes
-    COLOR_SHANK = [0.5, 0.5, 0.5]     # Neutral grey for shank
+    # Color definitions (configurable — see function parameters)
+    COLOR_CUTTING = list(cutting_color)
+    COLOR_SHANK   = list(shank_color)
 
     # ── Cylindrical body ──────────────────────────────────────────────
     for k in range(len(z_vals) - 1):

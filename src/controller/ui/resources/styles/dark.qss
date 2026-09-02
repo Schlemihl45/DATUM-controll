@@ -184,25 +184,34 @@ QSlider::sub-page:horizontal {
     border-radius: 4px;
 }
 
-/* --- Settings page --- */
-QTabWidget::pane {
-    border: 1px solid rgba(255, 255, 255, 0.06);
+/* --- Sim-widget overlay panel (sim/ui/overlay/settings_panel.py) ---
+   Card variant so the slide-out strip/panel follows the app theme
+   instead of a fixed hard-coded gray. Only the left corners are square
+   (right-edge-anchored panel); the strip sits flush against the panel. */
+QFrame#Card[variant="sim_overlay"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 rgba(45, 55, 72, 235),
+        stop: 1 rgba(35, 42, 53, 235)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+/* --- Sim-panel nav buttons (settings_panel.py outer strip, sim_panel.py
+   left-hand section nav) — a small checkable icon tile, native look
+   instead of the default Qt checked/sunken button style. --- */
+QFrame#Card[variant="sim_nav"] {
+    background: transparent;
+    border: 1px solid transparent;
     border-radius: 6px;
-    background: rgba(35, 42, 53, 200);
 }
 
-QTabBar::tab {
-    background: rgba(45, 55, 72, 180);
-    color: #8CA9C7;
-    padding: 6px 16px;
-    border-radius: 4px 4px 0 0;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-QTabBar::tab:selected {
-    background: rgba(45, 55, 72, 255);
-    color: #E7EBF0;
+QFrame#Card[variant="sim_nav"][checked="true"] {
+    background: rgba(76, 111, 224, 0.22);
+    border: 1px solid rgba(120, 155, 230, 0.45);
 }
 
 QComboBox {

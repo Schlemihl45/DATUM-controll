@@ -37,6 +37,7 @@ class AppSettings(QObject):
     show_datum_changed = Signal(bool)
     show_tool_changed = Signal(bool)
     show_feedrate_changed = Signal(bool)
+    show_part_time_changed = Signal(bool)
 
     tool_mode_changed = Signal(str)
     path_mode_changed = Signal(str)
@@ -44,6 +45,8 @@ class AppSettings(QObject):
     voxel_size_changed    = Signal(float)
     voxel_enabled_changed = Signal(bool)
     voxel_color_changed   = Signal(str)
+
+    tool_cutting_color_changed = Signal(str)
 
     # Stock-shape signals (any change requires a sim rebuild)
     stock_shape_changed         = Signal(str)
@@ -63,6 +66,16 @@ class AppSettings(QObject):
         "Holz":         (0.76, 0.60, 0.35),
     }
 
+    # ── Tool cutting-edge colour presets ───────────────────────────────────────
+    TOOL_COLORS: dict[str, tuple[float, float, float]] = {
+        "Gold (Standard)": (1.00, 0.84, 0.00),
+        "Silber":          (0.75, 0.75, 0.78),
+        "Kupfer":          (0.85, 0.55, 0.35),
+        "Blau":            (0.25, 0.55, 0.95),
+        "Rot":             (0.90, 0.25, 0.25),
+        "Grün":            (0.35, 0.80, 0.35),
+    }
+
     # Singleton ────────────────────────────────────────────────────────────────
     _instance: "AppSettings | None" = None
 
@@ -77,13 +90,15 @@ class AppSettings(QObject):
         # Keys stay "DatumSim"/"DatumSim" so user prefs survive upgrades
         self._qs = QSettings("DatumSim", "DatumSim")
 
-    BG_COLORS = {
-        "Dark (Standard)": "#1c1c1c",
-        "Black":           "#000000",
-        "Dark Grey":        "#2d2d2d",
-        "Grey":        "#4a4a4a",
-        "Dark Blue":        "#0d1b2a",
-        "DATUM": "#232a35" ,
+    # Named background gradient presets: name -> (inner_hex, outer_hex).
+    # Selected as a whole combo via apply_bg_theme() — no free colour picker.
+    BG_COLORS: dict[str, tuple[str, str]] = {
+        "Dark (Standard)": ("#1c1c1c", "#161b22"),
+        "Black":           ("#000000", "#000000"),
+        "Dark Grey":       ("#2d2d2d", "#232323"),
+        "Grey":            ("#4a4a4a", "#3a3a3a"),
+        "Dark Blue":       ("#0d1b2a", "#0a141f"),
+        "DATUM":           ("#232a35", "#1a1f28"),
     }
 
     @property
@@ -103,6 +118,31 @@ class AppSettings(QObject):
     def bg_color_2(self, v: str):
         self._qs.setValue("camera/bg_color_2", v)
         self.bg_color_2_changed.emit(v)
+
+    def apply_bg_theme(self, name: str) -> None:
+        """Set bg_color/bg_color_2 together from a named BG_COLORS preset.
+
+        The UI only ever offers these fixed combinations, never a free
+        colour picker — selecting one writes both existing hex properties,
+        so nothing downstream (Viewport's bg_color_changed/bg_color_2_changed
+        listeners) needs to change.
+        """
+        inner, outer = self.BG_COLORS.get(
+            name, self.BG_COLORS["Dark (Standard)"]
+        )
+        self.bg_color = inner
+        self.bg_color_2 = outer
+
+    def bg_theme_name(self) -> str:
+        """Best-effort reverse lookup: preset name matching the current
+        bg_color/bg_color_2 pair, or the default preset's name if the
+        stored colours don't match any known preset (e.g. pre-upgrade
+        QSettings state)."""
+        current = (self.bg_color, self.bg_color_2)
+        for name, pair in self.BG_COLORS.items():
+            if pair == current:
+                return name
+        return "Dark (Standard)"
 
     @property
     def zoom_speed(self) -> float:
@@ -260,6 +300,16 @@ class AppSettings(QObject):
         self.show_feedrate_changed.emit(v)
 
     @property
+    def show_part_time(self) -> bool:
+        """Whether the estimated part/cycle time pill is shown. Default True."""
+        return self._qs.value("controlhub/show_part_time", True, type=bool)
+
+    @show_part_time.setter
+    def show_part_time(self, v: bool):
+        self._qs.setValue("controlhub/show_part_time", v)
+        self.show_part_time_changed.emit(v)
+
+    @property
     def voxel_size(self) -> float:
         """Edge length of one voxel in mm. Default 0.5 mm."""
         return self._qs.value("sim/voxel_size", 0.5, type=float)
@@ -293,6 +343,20 @@ class AppSettings(QObject):
     def voxel_color_rgb(self) -> tuple[float, float, float]:
         """Current voxel colour as (r, g, b) floats 0–1."""
         return self.VOXEL_COLORS.get(self.voxel_color, (0.95, 0.68, 0.12))
+
+    @property
+    def tool_cutting_color(self) -> str:
+        """Name key from TOOL_COLORS. Default: 'Gold (Standard)'."""
+        return self._qs.value("sim/tool_cutting_color", "Gold (Standard)", type=str)
+
+    @tool_cutting_color.setter
+    def tool_cutting_color(self, name: str) -> None:
+        self._qs.setValue("sim/tool_cutting_color", name)
+        self.tool_cutting_color_changed.emit(name)
+
+    def tool_cutting_color_rgb(self) -> tuple[float, float, float]:
+        """Current tool cutting-edge colour as (r, g, b) floats 0–1."""
+        return self.TOOL_COLORS.get(self.tool_cutting_color, (1.0, 0.84, 0.0))
 
     # ── Stock shape settings ───────────────────────────────────────────────────
 

@@ -218,6 +218,14 @@ class MachinePage(QWidget):
         controller.line_changed.connect(self._on_line)
         controller.program_state_changed.connect(self._sync_ui_state)
 
+        # Feed/rapid overrides feed the sim widget's estimated part-time
+        # display — feed_changed carries a FeedData with feed_override;
+        # rapid_override_changed carries the fraction directly.
+        controller.feed_changed.connect(
+            lambda fd: self._sim.set_feed_override(fd.feed_override)
+        )
+        controller.rapid_override_changed.connect(self._sim.set_rapid_override)
+
         self._sync_ui_state(controller.program_state)
 
     # ── File loading (no machine-state requirement) ───────────────────────────

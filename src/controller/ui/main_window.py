@@ -124,17 +124,8 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(home_page)                        # _HOME_INDEX
         self._stack.addWidget(self._machine_page)               # _MACHINE_PAGE_INDEX
 
-        # Build SettingsPage — try to pass SimSettings if sim is available
-        _sim_settings = None
-        try:
-            from controller.sim.core.settings import AppSettings
-            _sim_settings = AppSettings.instance()
-        except ImportError:
-            pass
-
         self._settings_page = SettingsPage(
             theme_manager=theme_manager,
-            sim_settings=_sim_settings,
             parent=self,
         )
         self._stack.addWidget(self._settings_page)              # _SETTINGS_INDEX

@@ -324,6 +324,7 @@ class Viewport(QOpenGLWidget):
         # own connection; we only need to trigger a repaint so the new color shows
         # immediately without waiting for the next camera-move event.
         s.voxel_color_changed.connect(lambda _: self.update())
+        s.tool_cutting_color_changed.connect(self._on_tool_color_changed)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -344,6 +345,21 @@ class Viewport(QOpenGLWidget):
             self.doneCurrent()
         else:
             self._pending_tool = tool
+        self.update()
+
+    def _on_tool_color_changed(self, _name: str) -> None:
+        """Re-bake the tool mesh and cursor-dot color when the cutting-edge
+        color setting changes. Colors are baked per-vertex, not a shader
+        uniform, so both need an explicit refresh (see build_tool_mesh's
+        docstring)."""
+        if not hasattr(self, 'ctx'):
+            return
+        rgb = AppSettings.instance().tool_cutting_color_rgb()
+        self.makeCurrent()
+        if getattr(self, '_current_tool', None) is not None:
+            self._rebuild_tool_mesh(self._current_tool)
+        self._cursor_color_vbo.write(np.array(rgb, dtype='f4').tobytes())
+        self.doneCurrent()
         self.update()
 
     def set_path(self, path: PathBuffer) -> None:
@@ -470,13 +486,15 @@ class Viewport(QOpenGLWidget):
 
         # Dynamic cursor (point) buffer
         self._cursor_vbo = self.ctx.buffer(self._tool_pos.tobytes(), dynamic=True)
+        self._cursor_color_vbo = self.ctx.buffer(
+            np.array(AppSettings.instance().tool_cutting_color_rgb(), dtype='f4').tobytes(),
+            dynamic=True,
+        )
         self._cursor_vao = self.ctx.vertex_array(
             self._prog,
             [
                 (self._cursor_vbo, '3f', 'in_pos'),
-                (self.ctx.buffer(
-                    np.array([1.0, 0.84, 0.0], dtype='f4').tobytes()
-                ), '3f', 'in_col'),
+                (self._cursor_color_vbo, '3f', 'in_col'),
             ],
         )
 
@@ -597,7 +615,9 @@ class Viewport(QOpenGLWidget):
 
     def _rebuild_tool_mesh(self, tool: ToolDefinition) -> None:
         """Upload a new tool solid-of-revolution mesh to the GPU."""
-        verts, norms, colors = build_tool_mesh(tool)
+        verts, norms, colors = build_tool_mesh(
+            tool, cutting_color=AppSettings.instance().tool_cutting_color_rgb(),
+        )
 
         if self._cyl_vao is not None:
             self._cyl_vao.release()

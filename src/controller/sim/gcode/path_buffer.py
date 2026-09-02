@@ -5,6 +5,13 @@ from controller.sim.gcode.motion_planner import (
     MotionSegment, LinearSegment, ArcSegment, HelixSegment
 )
 
+# Assumed rapid (G0) feed rate, mm/min, used wherever a segment's real feed
+# rate is unknown/zeroed (see _tessellate_linear's `f = 0.0 if seg.is_rapid`
+# convention). Shared by SimulationPlayer.tick() (pacing playback) and
+# PathBuffer.estimated_time_s() (cycle-time estimate) so both agree on the
+# same assumption — was previously duplicated as a bare literal in player.py.
+DEFAULT_RAPID_FEED_MM_MIN = 5_000.0
+
 
 class PathBuffer:
 
@@ -61,6 +68,39 @@ class PathBuffer:
         i       = int(np.argmin(dist_sq))
         s       = self.arc_lengths[i] + t[i] * float(np.sqrt(lens_sq[i]))
         return float(s), int(self.line_ids[i])
+
+    def estimated_time_s(
+        self,
+        feed_override: float = 1.0,
+        rapid_override: float = 1.0,
+        rapid_feed_mm_min: float = DEFAULT_RAPID_FEED_MM_MIN,
+    ) -> float:
+        """Approximate total cycle ("part") time in seconds for the whole path.
+
+        Sums segment_length / effective_feed_rate across all tessellated
+        segments. Rapid (G0) segments carry feed_rate == 0.0 by convention
+        (see _tessellate_linear) and are timed at *rapid_feed_mm_min* scaled
+        by *rapid_override*; cutting segments use their own recorded feed
+        rate scaled by *feed_override*. Both overrides are fractions
+        (1.0 = 100%, matching MachineController's feed_override /
+        rapid_override convention).
+        """
+        if len(self.points) < 2:
+            return 0.0
+
+        seg_len  = np.diff(self.arc_lengths)   # (N-1,) mm per tessellated step
+        feeds    = self.feed_rates[1:]         # feed ARRIVING at each point
+        is_rapid = feeds < 1e-6
+
+        eff_feed = np.where(
+            is_rapid,
+            rapid_feed_mm_min * max(rapid_override, 1e-6),
+            feeds * max(feed_override, 1e-6),
+        )
+        eff_feed = np.maximum(eff_feed, 1e-6)   # guard div-by-zero
+
+        seconds = float(np.sum(seg_len / eff_feed)) * 60.0
+        return seconds
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
