@@ -28,6 +28,8 @@ Public interface (mirrors SimPlaceholder so machine_page.py can swap freely):
 """
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
@@ -91,6 +93,12 @@ class DatumSimWidget(QWidget):
         self._voxel_ctrl:     VoxelSimController | None = None
         self._voxel_renderer: VoxelRenderer | None      = None
         self._pending_voxel_setup: bool = False
+
+        # Carving runs in a background thread so the main-thread controller UI
+        # is never blocked by long numpy operations (deep plunges etc.).
+        self._carve_thread: threading.Thread | None = None
+        self._carve_done   = threading.Event()   # set by worker when grid is dirty
+        self._carve_abort  = threading.Event()   # set to cancel in-flight carving
 
         # ── Signal connections ────────────────────────────────────────────────
         self.settings.sim_panel.tool_mode_changed.connect(self.set_tool_mode)
@@ -205,6 +213,15 @@ class DatumSimWidget(QWidget):
 
     def _teardown_voxel_sim(self) -> None:
         """Stop the controller and remove the renderer from the viewport."""
+        # Signal the carving thread to abort and wait briefly for it to exit.
+        # This prevents the thread from writing to the (about-to-be-freed) grid.
+        self._carve_abort.set()
+        if self._carve_thread is not None and self._carve_thread.is_alive():
+            self._carve_thread.join(timeout=0.3)
+        self._carve_abort.clear()
+        self._carve_done.clear()
+        self._carve_thread = None
+
         self._voxel_ctrl = None          # carving stops immediately
 
         if self._voxel_renderer is not None:
@@ -318,6 +335,15 @@ class DatumSimWidget(QWidget):
             self._player.pause()
 
     def sim_reset(self) -> None:
+        # Stop any in-flight carving thread first to avoid writing to the grid
+        # while we reset it.
+        self._carve_abort.set()
+        if self._carve_thread is not None and self._carve_thread.is_alive():
+            self._carve_thread.join(timeout=0.3)
+        self._carve_abort.clear()
+        self._carve_done.clear()
+        self._carve_thread = None
+
         if self._player:
             self._player.reset()
             self._last_tool_change_idx = -1
@@ -382,16 +408,41 @@ class DatumSimWidget(QWidget):
             if self._current_tool:
                 self.control_hub.set_tool(self._current_tool.tool_number)
 
-            # Voxel carving: on_tick returns True if new segments were carved
+            # Voxel carving runs in a background thread so the main-thread
+            # controller UI is never blocked by long numpy operations.
             if self._voxel_ctrl is not None:
-                carved = self._voxel_ctrl.on_tick(s)
-                if carved:
-                    # Upload dirty region to GPU texture
+                # If the worker flagged new carved data, upload to GPU now.
+                if self._carve_done.is_set():
+                    self._carve_done.clear()
                     self.viewport.makeCurrent()
                     self._voxel_ctrl.grid.upload_if_dirty()
                     self.viewport.doneCurrent()
 
+                # Launch a new worker frame if the previous one is done.
+                if self._carve_thread is None or not self._carve_thread.is_alive():
+                    ctrl = self._voxel_ctrl   # capture; teardown may null self._voxel_ctrl
+                    self._carve_thread = threading.Thread(
+                        target=self._carve_worker,
+                        args=(ctrl, s),
+                        daemon=True,
+                        name="voxel-carver",
+                    )
+                    self._carve_thread.start()
+
         self.viewport.update()
+
+    def _carve_worker(self, ctrl, s: float) -> None:
+        """Background thread: advance HWM carving up to arc-length *s*.
+
+        Runs entirely off the main thread — no Qt or GL calls allowed here.
+        Sets ``_carve_done`` so ``_tick()`` knows to upload the dirty region
+        to the GPU on the next main-thread frame.
+        """
+        if self._carve_abort.is_set():
+            return
+        carved = ctrl.on_tick(s)
+        if carved and not self._carve_abort.is_set():
+            self._carve_done.set()
 
     def _on_sim_finished(self) -> None:
         self.control_hub.reset_play_state()

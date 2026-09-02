@@ -28,8 +28,13 @@ artefacts (ModernGL default) from leaking into normal computation.
 
 Shading
 -------
-• Blinn-Phong with ambient 0.30 so dark faces are never pitch-black.
-• Secondary fill light from below-left softens harsh shadow sides.
+• Blinn-Phong with half-Lambert diffuse wrapping.  The formula maps
+  dot(n, L) ∈ [-1, 1] to [0, 1] via (dot*0.5 + 0.5)*DIFF_STR so that
+  back faces receive only the ambient term, front faces are fully lit,
+  and the transition is smooth.  This avoids the "over-bright flat
+  outer shell" effect that standard max(0, dot) produces because the
+  stock's flat boundary faces saturate to the same brightness regardless
+  of orientation.
 • gl_FragDepth written at hit so the tool mesh depth-tests correctly
   against the stock.
 """
@@ -71,10 +76,15 @@ uniform float     u_voxel_size;
 uniform vec3      u_base_color;
 
 // ── Lighting ──────────────────────────────────────────────────────────────────
+// Half-Lambert wrapping: diff = (dot * 0.5 + 0.5) * DIFF_STR
+// Maps dot ∈ [-1,1] → [0,1] so shadow faces get 0 diff (only ambient)
+// and front faces get DIFF_STR.  Avoids the "over-bright flat outer shell"
+// that standard max(0,dot) produces on stock boundary faces.
 const vec3  LIGHT_DIR = normalize(vec3( 0.50,  0.70, 1.00));
-const float AMBIENT   = 0.30;
-const float SPEC_POW  = 24.0;
-const float SPEC_STR  = 0.28;
+const float AMBIENT   = 0.10;
+const float DIFF_STR  = 0.82;
+const float SPEC_POW  = 32.0;
+const float SPEC_STR  = 0.12;
 
 // ── March ─────────────────────────────────────────────────────────────────────
 const int   MAX_STEPS   = 1024;
@@ -150,11 +160,12 @@ void main() {
             float g_len = length(grad);
             vec3 n = (g_len > 1e-4) ? (grad / g_len) : normalize(u_cam_pos - pos);
 
-            // ── Blinn-Phong shading ───────────────────────────────────────────
+            // ── Blinn-Phong shading (half-Lambert diffuse) ───────────────────
             vec3  V    = normalize(u_cam_pos - pos);
             vec3  H    = normalize(LIGHT_DIR + V);
-            float diff = max(dot(n, LIGHT_DIR), 0.0);
-            float spec = pow(max(dot(n, H),     0.0), SPEC_POW) * SPEC_STR;
+            // Half-Lambert: smooth wrap-around, no harsh pitch-black shadows
+            float diff = (dot(n, LIGHT_DIR) * 0.5 + 0.5) * DIFF_STR;
+            float spec = pow(max(dot(n, H), 0.0), SPEC_POW) * SPEC_STR;
 
             vec3 color = u_base_color * (AMBIENT + diff) + vec3(spec);
 

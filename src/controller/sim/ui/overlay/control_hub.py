@@ -364,7 +364,12 @@ class ControlHub(QWidget):
         self._sync_info()
 
     def _sync_info(self) -> None:
-        """Show info container iff any label is visible; resize and notify parent."""
+        """Show info container iff any label is visible; resize and notify parent.
+
+        Uses layout().activate() to force an immediate size recalculation before
+        reading sizeHint() — without this, Qt may return a stale value immediately
+        after setVisible() and the widget gets the wrong height.
+        """
         any_vis = (
             self._datum_lbl.isVisible()
             or self._gcode_lbl.isVisible()
@@ -372,11 +377,14 @@ class ControlHub(QWidget):
             or self._feed_lbl.isVisible()
         )
         self._info_container.setVisible(any_vis)
-        # Resize to correct height without changing the fixed width
+        # Force the VBoxLayout to recalculate immediately (not deferred)
+        self.layout().activate()
         new_h = self.sizeHint().height()
-        if new_h > 0 and new_h != self.height():
-            self.resize(self.width(), new_h)
-            self.layout_changed.emit()
+        if new_h > 0:
+            old_h = self.height()
+            self.setFixedSize(520, new_h)
+            if new_h != old_h:
+                self.layout_changed.emit()
 
     def _on_gcode_vis(self, visible: bool) -> None:
         self._gcode_lbl.setVisible(visible)
