@@ -38,7 +38,8 @@ class AppSettings(QObject):
     tool_mode_changed = Signal(str)
     path_mode_changed = Signal(str)
 
-    voxel_size_changed = Signal(float)
+    voxel_size_changed    = Signal(float)
+    voxel_enabled_changed = Signal(bool)
 
     # Singleton ────────────────────────────────────────────────────────────────
     _instance: "AppSettings | None" = None
@@ -226,3 +227,13 @@ class AppSettings(QObject):
         v = float(max(0.05, v))   # prevent accidentally tiny grids
         self._qs.setValue("sim/voxel_size", v)
         self.voxel_size_changed.emit(v)
+
+    @property
+    def voxel_enabled(self) -> bool:
+        """Whether the voxel material-removal simulation should run. Default True."""
+        return self._qs.value("sim/voxel_enabled", True, type=bool)
+
+    @voxel_enabled.setter
+    def voxel_enabled(self, v: bool) -> None:
+        self._qs.setValue("sim/voxel_enabled", bool(v))
+        self.voxel_enabled_changed.emit(bool(v))

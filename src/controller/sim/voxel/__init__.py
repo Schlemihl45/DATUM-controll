@@ -1,12 +1,19 @@
 """
-sim/voxel/ — Voxel-based material-removal simulation sub-package.
+sim/voxel — GPU-accelerated voxel material-removal simulation.
 
-No top-level imports here. The C++ extension module (voxel_mod) is imported
-lazily inside controller.py so that a missing OpenVDB build does not break the
-rest of the application on import.
+No C++ extension or external build tools required.
+All simulation logic is implemented in pure Python + numpy.
+Rendering uses GLSL raymarching via the existing ModernGL context (OpenGL 3.3+).
 
-Public API (lazy-import these directly where needed):
-    from controller.sim.voxel.stock      import StockDefinition, SourceType, BoundingBox
-    from controller.sim.voxel.controller import VoxelSimController
-    from controller.sim.voxel.renderer   import VoxelRenderer
+Sub-modules
+-----------
+stock       — BoundingBox + StockDefinition (workpiece geometry)
+gpu_grid    — GpuVoxelGrid: numpy CPU array + ModernGL Texture3D (GPU)
+carver      — VoxelCarver: numpy tool-footprint subtraction
+controller  — VoxelSimController: High-Water-Mark path dispatch
+renderer    — VoxelRenderer: GLSL raymarching, Blinn-Phong shading
+
+Extension points
+----------------
+physics/    (future) — temperature and force fields via GPU compute or Taichi
 """
