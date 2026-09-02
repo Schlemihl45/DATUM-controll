@@ -63,18 +63,12 @@ class VoxelCarver:
         """
         Subtract the swept volume of *tool* moving from *start* to *end*.
 
-        Samples the segment at ≤ half-voxel intervals and accumulates the
-        union of all per-sample tool footprints before calling grid.carve().
+        Samples the segment at ≤ half-voxel intervals *laterally* and
+        accumulates the union of all per-sample tool footprints before
+        calling grid.carve().
         """
         seg_vec = (end - start).astype("f4")
-        seg_len = float(np.linalg.norm(seg_vec))
         vs      = self._grid.voxel_size
-
-        # ── Sample positions ─────────────────────────────────────────────────
-        # At least 2 (start + end), then add intermediate at ½-voxel spacing
-        n_samples = max(2, int(np.ceil(seg_len / (vs * 0.5))) + 1)
-        ts  = np.linspace(0.0, 1.0, n_samples, dtype="f4")      # (n,)
-        pts = start + ts[:, np.newaxis] * seg_vec                # (n, 3)
 
         # ── Effective cutting depth ───────────────────────────────────────────
         cut_len = tool.cutting_length
@@ -82,6 +76,34 @@ class VoxelCarver:
             cut_len = tool.total_length
         if cut_len <= 0.0:
             cut_len = 999.0     # fallback: treat as infinitely long
+
+        # ── Sample positions ─────────────────────────────────────────────────
+        # Sampling density only needs to track LATERAL (XY) travel: adjacent
+        # stamps must overlap in XY or the swept footprint gets gaps between
+        # them. Z travel is instead captured by each stamp's own
+        # [tip, tip + cut_len] Z-window (below) — as long as consecutive
+        # samples don't step more than cut_len in Z, those windows already
+        # overlap and their union is gap-free, so no extra Z sampling is
+        # needed there.
+        #
+        # Sampling at seg_len / (vs*0.5) — the full 3-D distance, as before —
+        # over-samples any move with a Z component by seg_len / xy_len for no
+        # benefit: a straight vertical plunge has xy_len == 0, yet used to
+        # spawn as many redundant same-XY-footprint stamps as a horizontal
+        # move of the same length. Each stamp costs the same O(cut_len / vs)
+        # regardless, so this was the root cause of the voxel display falling
+        # further and further behind the tool on vertical dives — worse the
+        # steeper the move and the faster the sim runs, since more stamps
+        # queue up per second of playback. Horizontal moves still sample at
+        # the same density as before (xy_len == seg_len there), so their
+        # carving cost is unchanged.
+        xy_len = float(np.linalg.norm(seg_vec[:2]))
+        z_len  = float(abs(seg_vec[2]))
+        n_xy   = int(np.ceil(xy_len / (vs * 0.5))) + 1
+        n_z    = int(np.ceil(z_len / cut_len)) + 1   # guards steep/long steps
+        n_samples = max(2, n_xy, n_z)
+        ts  = np.linspace(0.0, 1.0, n_samples, dtype="f4")      # (n,)
+        pts = start + ts[:, np.newaxis] * seg_vec                # (n, 3)
 
         # ── Sweep bounding box in voxel indices ───────────────────────────────
         bbox   = self._grid.bbox
