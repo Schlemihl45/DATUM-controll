@@ -89,8 +89,25 @@ class VoxelCarver:
         nx, ny, nz = self._grid.shape
         tip_r  = tool.radius
 
-        sweep_min = pts.min(axis=0) - tip_r - vs
-        sweep_max = pts.max(axis=0) + tip_r + vs
+        min_pt = pts.min(axis=0)
+        max_pt = pts.max(axis=0)
+
+        # XY: tool radius defines the lateral margin.
+        # Z:  the tool body extends CUT_LEN *above* the tip (toward the shank).
+        #     Using tip_r here instead of cut_len would under-estimate sweep_max_z
+        #     whenever cut_len > tip_r, leaving the upper flute slices outside the
+        #     bounding box and silently skipping those voxels — the root cause of
+        #     the "top layers not carved" bug.
+        sweep_min = np.array([
+            min_pt[0] - tip_r    - vs,
+            min_pt[1] - tip_r    - vs,
+            min_pt[2]            - vs,   # just below the lowest tip position
+        ], dtype="f4")
+        sweep_max = np.array([
+            max_pt[0] + tip_r    + vs,
+            max_pt[1] + tip_r    + vs,
+            max_pt[2] + cut_len  + vs,   # above the highest flute-top position
+        ], dtype="f4")
 
         ix0 = int(np.clip(np.floor((sweep_min[0] - origin[0]) / vs), 0, nx))
         ix1 = int(np.clip(np.ceil ((sweep_max[0] - origin[0]) / vs), 0, nx))
@@ -120,11 +137,17 @@ class VoxelCarver:
             dy = ys - ty                                        # (ly,)
             r2_xy = dx[np.newaxis, :] ** 2 + dy[:, np.newaxis] ** 2   # (ly, lx)
 
-            # Per z-slice: check tool profile radius
-            for iz_local in range(lz):
+            # Per-sample Z-range: restrict to [tz, tz + cut_len] mapped to
+            # the bbox-relative index range.  For deep plunges this shrinks
+            # the inner loop from lz (all bbox Z-slices) down to ≈ cut_len/vs
+            # slices — a 5–10× speedup on long vertical segments.
+            iz_abs_lo = max(iz0, int(np.floor((tz           - origin[2]) / vs)))
+            iz_abs_hi = min(iz1, int(np.ceil ((tz + cut_len - origin[2]) / vs)) + 1)
+
+            for iz_abs in range(iz_abs_lo, iz_abs_hi):
+                iz_local = iz_abs - iz0
                 # Height above tool tip (z=0 at tip, increases toward shank).
-                # profile_radius_at() uses the same convention:
-                #   z=0 → tip contact, z>0 → up into the flute.
+                # profile_radius_at() uses the same convention.
                 local_z = float(zs[iz_local]) - tz
                 if local_z < 0.0 or local_z > cut_len:
                     continue
