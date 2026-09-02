@@ -219,12 +219,21 @@ class MachinePage(QWidget):
         controller.program_state_changed.connect(self._sync_ui_state)
 
         # Feed/rapid overrides feed the sim widget's estimated part-time
-        # display — feed_changed carries a FeedData with feed_override;
-        # rapid_override_changed carries the fraction directly.
+        # calculation — feed_changed carries a FeedData with feed_override;
+        # rapid_override_changed carries the fraction directly. The sim
+        # widget owns the computation (it has the PathBuffer); the result is
+        # displayed in ProgramInfoCard's "Approximated" field, not in the
+        # sim widget itself.
         controller.feed_changed.connect(
             lambda fd: self._sim.set_feed_override(fd.feed_override)
         )
         controller.rapid_override_changed.connect(self._sim.set_rapid_override)
+        self._sim.part_time_changed.connect(self._program_info.set_part_time)
+
+        # Tool called out by the running program — reflects T-commands
+        # crossed during SIM playback AND during a real MACHINE-mode run
+        # started via the Start button (see DatumSimWidget._apply_tool()).
+        self._sim.tool_changed.connect(self._tool_info.set_tool)
 
         self._sync_ui_state(controller.program_state)
 

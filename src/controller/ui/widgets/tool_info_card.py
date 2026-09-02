@@ -1,15 +1,20 @@
 """
-ui/widgets/tool_info_card.py — Active tool info. Placeholder until the
-tool database (repository) exists — set_tool(None) is the current
-permanent state; set_tool(tool) will be wired up once ToolRepository
-is built.
+ui/widgets/tool_info_card.py — Active tool info.
+
+Displays the tool datum_sim's DatumSimWidget currently has active —
+i.e. the tool called out by the running G-code program, whether that's
+driven by SIM-mode playback or a real MACHINE-mode run (see
+DatumSimWidget.tool_changed, wired up in MachinePage). Uses
+sim.simulation.tool_definition.ToolDefinition, the tool type datum_sim
+actually has data for today — not domain.models.Tool, which nothing in
+the codebase populates (no ToolRepository exists yet).
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
 
-from controller.domain.models import Tool
+from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.ui.widgets.card import Card
 
 
@@ -37,16 +42,14 @@ class ToolInfoCard(Card):
         grid.addWidget(QLabel("Material"), 2, 0)
         grid.addWidget(self._material_label, 2, 1)
 
-    def set_tool(self, tool: Tool | None) -> None:
-        """tool: domain.models.Tool | None — wired up once the tool
-        repository exists. For now, always called with None."""
+    def set_tool(self, tool: ToolDefinition | None) -> None:
         if tool is None:
             self._name_label.setText("No tool loaded")
             self._diameter_label.setText("—")
             self._material_label.setText("—")
             return
-        # Tool has no dedicated "name" field — fall back to the T-number
-        # when no free-text description was entered.
-        self._name_label.setText(tool.description or f"T{tool.number}")
+        # ToolDefinition has no dedicated "name" field — fall back to the
+        # T-number when no free-text remark was entered.
+        self._name_label.setText(tool.remark or f"T{tool.tool_number}")
         self._diameter_label.setText(f"{tool.diameter} mm")
         self._material_label.setText(tool.material or "—")

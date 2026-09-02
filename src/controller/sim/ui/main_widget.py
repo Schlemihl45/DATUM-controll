@@ -32,7 +32,7 @@ import threading
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from controller.sim.ui.viewport        import Viewport, ToolMode, PathMode
@@ -73,6 +73,19 @@ _SYNC_CARVE_MAX_MM = 40.0
 
 class DatumSimWidget(QWidget):
     """Top-level 3D simulation widget — drop-in replacement for SimPlaceholder."""
+
+    # Emitted whenever the estimated part/cycle time is (re)computed — a
+    # float in seconds, or None if no program is loaded. The sim widget owns
+    # the computation (it has the PathBuffer + current overrides); the
+    # display lives elsewhere (ProgramInfoCard on MachinePage), pushed-state
+    # style like set_position()/set_line().
+    part_time_changed = Signal(object)
+
+    # Emitted whenever the active tool changes (T-command crossed, program
+    # (re)loaded, or reset) — a ToolDefinition. Lets MachinePage's
+    # ToolInfoCard reflect the tool called out in the running program,
+    # including during a real MACHINE-mode run.
+    tool_changed = Signal(object)
 
     _TOOL_MAP = {
         "Endmill":    ToolMode.CYLINDER,
@@ -128,10 +141,18 @@ class DatumSimWidget(QWidget):
         self._pending_machine_carve:  tuple[np.ndarray, np.ndarray] | None = None
 
         # ── Signal connections ────────────────────────────────────────────────
-        self.settings.sim_panel.tool_mode_changed.connect(self.set_tool_mode)
-        self.settings.sim_panel.path_mode_changed.connect(self.set_path_mode)
-
+        # Tool/path display mode are read straight from AppSettings rather
+        # than forwarded through a specific settings-widget instance: the
+        # same setting can now be edited from either the sim widget's own
+        # overlay panel or the app-wide SettingsPage (see sim_panel.py's
+        # build_sections()), so AppSettings is the single source of truth
+        # both listen to and write through.
         s = AppSettings.instance()
+        s.tool_mode_changed.connect(
+            lambda name: self.set_tool_mode(self._TOOL_MAP.get(name, ToolMode.CYLINDER)))
+        s.path_mode_changed.connect(
+            lambda name: self.set_path_mode(self._PATH_MAP.get(name, PathMode.PROGRESSIVE)))
+
         s.voxel_size_changed.connect(self._on_voxel_size_changed)
         s.voxel_enabled_changed.connect(self._on_voxel_enabled_changed)
         # Rebuild the sim whenever stock geometry settings change
@@ -175,8 +196,6 @@ class DatumSimWidget(QWidget):
 
         if _VOXEL_AVAILABLE and s.voxel_enabled:
             self._schedule_voxel_sim()
-
-        self.settings.sim_panel.set_sim_running(True)
 
     # ── Voxel sim lifecycle ───────────────────────────────────────────────────
 
@@ -307,13 +326,13 @@ class DatumSimWidget(QWidget):
             return
         self._current_tool = tool
         self.viewport.set_tool_definition(tool)
-        self.settings.sim_panel.set_current_tool(tool.tool_number)
         # Push to the info pill directly rather than waiting for the next
         # SIM-mode _tick() to refresh it — _tick()'s tool-label refresh only
         # ran while self._mode == "SIM", so MACHINE-mode tool changes (via
         # set_line() -> _check_tool_change()) and sim_reset() never reached
         # the display until (if ever) SIM mode ticked again.
         self.control_hub.set_tool(tool.tool_number)
+        self.tool_changed.emit(tool)
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.update_tool(tool)
 
@@ -357,12 +376,12 @@ class DatumSimWidget(QWidget):
 
     def _recompute_part_time(self) -> None:
         if self._last_program is None:
-            self.control_hub.set_part_time(None)
+            self.part_time_changed.emit(None)
             return
         seconds = self._last_program.path.estimated_time_s(
             self._feed_override, self._rapid_override,
         )
-        self.control_hub.set_part_time(seconds)
+        self.part_time_changed.emit(seconds)
 
     # ── Machine interface (SimPlaceholder-compatible API) ─────────────────────
 
@@ -412,12 +431,10 @@ class DatumSimWidget(QWidget):
     def set_path_mode(self, mode: PathMode) -> None:
         self._path_mode = mode
         self.viewport.set_path_mode(mode)
-        self.settings.sim_panel.set_path_mode(mode)
 
     def set_tool_mode(self, mode: ToolMode) -> None:
         self._tool_mode = mode
         self.viewport.set_tool_mode(mode)
-        self.settings.sim_panel.set_tool_mode(mode)
 
     # ── Playback controls ─────────────────────────────────────────────────────
 
