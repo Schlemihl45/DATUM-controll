@@ -33,6 +33,15 @@ from controller.sim.simulation.tool_database import get_tool
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.sim.core.settings import AppSettings
 
+# Voxel controller and renderer — imported lazily (depend on C++ extension)
+try:
+    from controller.sim.voxel.controller import VoxelSimController
+    from controller.sim.voxel.renderer import VoxelRenderer
+    from controller.sim.voxel.stock import StockDefinition, BoundingBox
+    _VOXEL_AVAILABLE = True
+except ImportError:
+    _VOXEL_AVAILABLE = False
+
 
 class DatumSimWidget(QWidget):
     """Top-level 3D simulation widget — drop-in replacement for SimPlaceholder.
@@ -72,9 +81,16 @@ class DatumSimWidget(QWidget):
         self._path_mode:            PathMode                = PathMode.FULL
         self._tool_mode:            ToolMode                = ToolMode.POINT
 
+        # Voxel sim controller + renderer (None until set_file() + initializeGL)
+        self._voxel_ctrl:     "VoxelSimController | None" = None
+        self._voxel_renderer: "VoxelRenderer | None"      = None
+
         # Wire sim-panel → viewport
         self.settings.sim_panel.tool_mode_changed.connect(self.set_tool_mode)
         self.settings.sim_panel.path_mode_changed.connect(self.set_path_mode)
+
+        # Voxel size change from settings → reset (grid can't be resized live)
+        AppSettings.instance().voxel_size_changed.connect(self._on_voxel_size_changed)
 
         # Render tick (~30 fps)
         self._render_timer = QTimer(self)
@@ -89,6 +105,11 @@ class DatumSimWidget(QWidget):
 
     def set_file(self, path: str) -> None:
         """Compile and load a G-code file, set up the simulation player."""
+        # Tear down any previous voxel controller cleanly
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.stop()
+            self._voxel_ctrl = None
+
         program = self.compiler.load_file(path)
         self._clean_lines          = program.clean_lines
         self._player               = SimulationPlayer(program.path)
@@ -109,6 +130,66 @@ class DatumSimWidget(QWidget):
         )
         self._apply_tool(first_tool)
 
+        # Initialise voxel simulation (no-op if C++ extension not installed)
+        if _VOXEL_AVAILABLE:
+            self._setup_voxel_sim(program, first_tool, s.voxel_size)
+
+        # Tell the sim panel whether a sim is now running (for voxel size guard)
+        self.settings.sim_panel.set_sim_running(True)
+
+    # ── Voxel simulation setup ────────────────────────────────────────────────
+
+    def _setup_voxel_sim(self, program, first_tool, voxel_size: float) -> None:
+        """Create VoxelSimController and VoxelRenderer for the loaded program."""
+        # Build stock bounding box from path + padding
+        bbox = BoundingBox.from_path_buffer(program.path, margin_mm=5.0)
+        stock = StockDefinition(bbox=bbox, voxel_size=voxel_size)
+
+        self._voxel_ctrl = VoxelSimController(
+            stock            = stock,
+            path_points      = program.path.points,
+            path_arc_lengths = program.path.arc_lengths,
+            tool             = first_tool,
+        )
+
+        # Create VoxelRenderer lazily — Viewport's GL context must be ready.
+        # We attach it after the first paintGL via a one-shot connection.
+        if not hasattr(self.viewport, 'ctx'):
+            # GL not ready yet — defer until after initializeGL fires
+            self.viewport.installEventFilter(self)
+            self._pending_voxel_renderer = True
+        else:
+            self._create_voxel_renderer()
+
+    def _create_voxel_renderer(self) -> None:
+        """Create and attach VoxelRenderer once the GL context is available."""
+        if not _VOXEL_AVAILABLE:
+            return
+        self.viewport.makeCurrent()
+        self._voxel_renderer = VoxelRenderer(self.viewport.ctx)
+        self.viewport.doneCurrent()
+        self.viewport.set_voxel_renderer(self._voxel_renderer)
+
+    def eventFilter(self, obj, event) -> bool:
+        """One-shot event filter: create VoxelRenderer after GL is initialised."""
+        from PySide6.QtCore import QEvent
+        if (obj is self.viewport
+                and event.type() == QEvent.Type.Paint
+                and getattr(self, '_pending_voxel_renderer', False)):
+            self._pending_voxel_renderer = False
+            self.viewport.removeEventFilter(self)
+            self._create_voxel_renderer()
+        return super().eventFilter(obj, event)
+
+    def _on_voxel_size_changed(self, voxel_size: float) -> None:
+        """Voxel size changed in settings → reset the grid (no live resize)."""
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.stop()
+            self._voxel_ctrl = None
+        # Re-create with new voxel size if a program is loaded
+        if self._player is not None and hasattr(self, '_last_program'):
+            self._setup_voxel_sim(self._last_program, self._current_tool, voxel_size)
+
     # ── Tool management (T-command driven) ───────────────────────────────────
 
     def _apply_tool(self, tool: ToolDefinition | None) -> None:
@@ -119,6 +200,9 @@ class DatumSimWidget(QWidget):
         self.viewport.set_tool_definition(tool)
         # Notify the sim panel's display (read-only label, no combo selection)
         self.settings.sim_panel.set_current_tool(tool.tool_number)
+        # Update the voxel controller's tool profile for subsequent segments
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.update_tool(tool)
 
     def _check_tool_change(self, current_line: int) -> None:
         """Auto-swap tool when the simulation passes a T-command line."""
@@ -177,6 +261,9 @@ class DatumSimWidget(QWidget):
             self._player.reset()
             self._last_tool_change_idx = -1
             self.control_hub.reset_play_state()
+        # Reset the voxel grid to the initial blank state (rebuilds via worker)
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.reset()
 
     def sim_seek(self, fraction: float) -> None:
         if self._player:
@@ -231,6 +318,17 @@ class DatumSimWidget(QWidget):
             self.control_hub.set_datum(getattr(self.viewport, '_active_wcs', 1))
             if hasattr(self, '_current_tool') and self._current_tool:
                 self.control_hub.set_tool(self._current_tool.tool_number)
+
+            # Feed arc-length to voxel controller (High-Water-Mark logic inside)
+            if self._voxel_ctrl is not None:
+                self._voxel_ctrl.on_tick(s)
+
+        # Check whether the worker thread produced a new mesh
+        if self._voxel_ctrl is not None:
+            mesh = self._voxel_ctrl.get_mesh_if_dirty()
+            if mesh is not None:
+                verts, normals, indices = mesh
+                self.viewport.upload_voxel_mesh(verts, normals, indices)
 
         self.viewport.update()
 

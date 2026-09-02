@@ -38,6 +38,8 @@ class AppSettings(QObject):
     tool_mode_changed = Signal(str)
     path_mode_changed = Signal(str)
 
+    voxel_size_changed = Signal(float)
+
     # Singleton ────────────────────────────────────────────────────────────────
     _instance: "AppSettings | None" = None
 
@@ -213,3 +215,14 @@ class AppSettings(QObject):
     def show_feedrate(self, v: bool):
         self._qs.setValue("controlhub/show_feedrate", v)
         self.show_feedrate_changed.emit(v)
+
+    @property
+    def voxel_size(self) -> float:
+        """Edge length of one voxel in mm. Default 0.5 mm."""
+        return self._qs.value("sim/voxel_size", 0.5, type=float)
+
+    @voxel_size.setter
+    def voxel_size(self, v: float) -> None:
+        v = float(max(0.05, v))   # prevent accidentally tiny grids
+        self._qs.setValue("sim/voxel_size", v)
+        self.voxel_size_changed.emit(v)

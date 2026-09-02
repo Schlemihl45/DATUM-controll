@@ -337,6 +337,32 @@ class Viewport(QOpenGLWidget):
             np.searchsorted(self._path_arc_lengths, s, side='right')
         )
 
+    def set_voxel_renderer(self, renderer) -> None:
+        """Attach a VoxelRenderer to draw the stock mesh during paintGL.
+
+        Must be called after initializeGL so the renderer can use self.ctx.
+        Pass None to detach an existing renderer.
+        """
+        self._voxel_renderer = renderer
+
+    def upload_voxel_mesh(
+        self,
+        vertices: np.ndarray,
+        normals:  np.ndarray,
+        indices:  np.ndarray,
+    ) -> None:
+        """Upload a new voxel mesh to the VoxelRenderer.
+
+        Calls makeCurrent/doneCurrent around the GPU upload so this method can
+        safely be called from the main thread outside paintGL.
+        """
+        if self._voxel_renderer is None:
+            return
+        self.makeCurrent()
+        self._voxel_renderer.upload_mesh(vertices, normals, indices)
+        self.doneCurrent()
+        self.update()
+
     def set_window_gradient(self, top: str, bottom: str) -> None:
         """Update corner-fill gradient colors to match the active theme.
 
@@ -433,6 +459,9 @@ class Viewport(QOpenGLWidget):
         self._show_grid = s.show_grid
         s.show_grid_changed.connect(self._on_show_grid_changed)
 
+        # VoxelRenderer — set externally via set_voxel_renderer()
+        self._voxel_renderer = None
+
     def resizeGL(self, w: int, h: int) -> None:
         if hasattr(self, 'ctx'):
             self.ctx.viewport = (0, 0, w, h)
@@ -470,13 +499,18 @@ class Viewport(QOpenGLWidget):
             elif self._path_mode == PathMode.PROGRESSIVE and self._path_split_idx > 1:
                 self._path_vao.render(moderngl.LINE_STRIP, vertices=self._path_split_idx)
 
-        # 4. Tool mesh (with depth test)
+        # 4. Voxel stock mesh (between path and tool so tool renders on top)
+        if self._voxel_renderer is not None:
+            cam_pos = self.camera.eye()
+            self._voxel_renderer.render(mvp, cam_pos)
+
+        # 5. Tool mesh (with depth test)
         if self._tool_mode == ToolMode.CYLINDER and self._cyl_vao is not None:
             self._tool_prog['u_mvp'].write(mvp.T.tobytes())
             self._tool_prog['u_tool_pos'].write(self._tool_pos.tobytes())
             self._cyl_vao.render(moderngl.TRIANGLES)
 
-        # 5. Point cursor (always on top — no depth test)
+        # 6. Point cursor (always on top — no depth test)
         if self._tool_mode == ToolMode.POINT:
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.point_size = 12.0
@@ -486,7 +520,7 @@ class Viewport(QOpenGLWidget):
         if self._perf:
             self._perf.tick()
 
-        # 6. Corner-fill to blend viewport edge with host window gradient
+        # 7. Corner-fill to blend viewport edge with host window gradient
         win = self.window()
         dpr = self.devicePixelRatioF()
         if win is not None:
