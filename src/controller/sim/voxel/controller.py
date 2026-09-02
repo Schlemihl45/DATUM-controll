@@ -100,9 +100,10 @@ class VoxelSimController:
         carved_any = False
         for i in range(self._max_idx, new_idx):
             # Skip G0 rapid moves — feed_rate == 0.0 marks rapid segments.
-            # The segment from point i to i+1 is rapid if EITHER endpoint
-            # has feed_rate 0 (conservative: skip if the move started rapid).
-            if self._feeds[i] == 0.0:
+            # path_buffer.py convention: feed_rates[k] is the feed that
+            # ARRIVED at point k (the move from k-1 → k).  So the segment
+            # from i → i+1 is rapid when feeds[i+1] == 0.0.
+            if self._feeds[i + 1] == 0.0:
                 continue
             self._carver.carve_segment(
                 self._pts[i],

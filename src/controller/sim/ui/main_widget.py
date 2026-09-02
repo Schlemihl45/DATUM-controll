@@ -43,7 +43,7 @@ from controller.sim.core.settings             import AppSettings
 
 # Voxel sim — pure Python/numpy + GLSL raymarching (no C++ required)
 try:
-    from controller.sim.voxel.stock      import StockDefinition, BoundingBox
+    from controller.sim.voxel.stock      import StockDefinition, StockShape
     from controller.sim.voxel.gpu_grid   import GpuVoxelGrid
     from controller.sim.voxel.carver     import VoxelCarver
     from controller.sim.voxel.controller import VoxelSimController
@@ -99,6 +99,11 @@ class DatumSimWidget(QWidget):
         s = AppSettings.instance()
         s.voxel_size_changed.connect(self._on_voxel_size_changed)
         s.voxel_enabled_changed.connect(self._on_voxel_enabled_changed)
+        # Rebuild the sim whenever stock geometry settings change
+        s.stock_shape_changed.connect(self._on_stock_settings_changed)
+        s.stock_z_offset_changed.connect(self._on_stock_settings_changed)
+        s.stock_height_changed.connect(self._on_stock_settings_changed)
+        s.stock_round_radius_changed.connect(self._on_stock_settings_changed)
 
         # ── Render tick (~30 fps) ─────────────────────────────────────────────
         self._render_timer = QTimer(self)
@@ -162,8 +167,22 @@ class DatumSimWidget(QWidget):
 
         self.viewport.makeCurrent()
         try:
-            bbox  = BoundingBox.from_path_buffer(self._last_program.path, margin_mm=5.0)
-            stock = StockDefinition(bbox=bbox, voxel_size=s.voxel_size)
+            # Build stock definition from persisted settings, then derive bbox
+            # from the cutting-move extent of the loaded program.
+            try:
+                shape = StockShape(s.stock_shape)
+            except ValueError:
+                shape = StockShape.BOUNDING_BOX
+
+            stock = StockDefinition(
+                shape           = shape,
+                voxel_size      = s.voxel_size,
+                z_offset_mm     = s.stock_z_offset_mm,
+                height_mm       = s.stock_height_mm,
+                round_radius_mm = s.stock_round_radius_mm,
+            )
+            stock.build_bbox(self._last_program.path)
+
             grid  = GpuVoxelGrid(self.viewport.ctx, stock)
             carver = VoxelCarver(grid)
 
@@ -229,6 +248,14 @@ class DatumSimWidget(QWidget):
                 self._schedule_voxel_sim()
         else:
             self._teardown_voxel_sim()
+
+    def _on_stock_settings_changed(self, *_args) -> None:
+        """Any stock geometry setting changed → tear down and rebuild the sim."""
+        if not _VOXEL_AVAILABLE:
+            return
+        self._teardown_voxel_sim()
+        if self._last_program is not None and AppSettings.instance().voxel_enabled:
+            self._schedule_voxel_sim()
 
     # ── Tool management ───────────────────────────────────────────────────────
 

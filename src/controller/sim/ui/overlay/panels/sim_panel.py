@@ -6,6 +6,7 @@ Shows simulation behavior settings:
   • Path mode          — Complete / Progressive / None
   • Info label visibility toggles (WCS / G-code line / Tool / Feedrate)
   • Abtragssimulation  — enable/disable toggle + voxel size (mm)
+  • Rohteil            — stock shape + dimensional overrides
 
 The tool-database selector was intentionally removed: tool changes happen
 exclusively via T-commands in the G-code program, never through the UI.
@@ -37,6 +38,10 @@ try:
     del _VSC
 except ImportError:
     _VOXEL_AVAILABLE = False
+
+# Shape labels ↔ settings key
+_SHAPE_LABELS = ["Boundary Box", "Rund"]
+_SHAPE_KEYS   = ["bounding_box", "round"]
 
 
 class SimPanel(QWidget):
@@ -119,7 +124,7 @@ class SimPanel(QWidget):
         if _VOXEL_AVAILABLE:
             self._chk_voxel.setToolTip(
                 "Aktiviert die voxelbasierte Materialabtragssimulation.\n"
-                "Das Rohteil wird als OpenVDB Level-Set simuliert."
+                "Das Rohteil wird als 3D-Textur simuliert."
             )
         else:
             self._chk_voxel.setEnabled(False)
@@ -151,6 +156,57 @@ class SimPanel(QWidget):
         voxel_form.addRow("Voxelgröße", self._voxel_size_spin)
         root.addLayout(voxel_form)
 
+        # ── Rohteil (stock geometry) ──────────────────────────────────────────
+        root.addWidget(_section_label("Rohteil"))
+        stock_form = QFormLayout()
+        stock_form.setContentsMargins(0, 0, 0, 0)
+        stock_form.setSpacing(8)
+
+        # Shape selector
+        self._stock_shape_combo = QComboBox()
+        self._stock_shape_combo.addItems(_SHAPE_LABELS)
+        stock_form.addRow("Form", self._stock_shape_combo)
+
+        # Z-Oberfläche: distance from Z=0 to stock top surface
+        self._stock_z_offset_spin = QDoubleSpinBox()
+        self._stock_z_offset_spin.setRange(-500.0, 500.0)
+        self._stock_z_offset_spin.setSingleStep(0.5)
+        self._stock_z_offset_spin.setDecimals(2)
+        self._stock_z_offset_spin.setSuffix(" mm")
+        self._stock_z_offset_spin.setToolTip(
+            "Abstand vom Werkzeug-Nullpunkt (Z=0) zur Rohteiloberfläche.\n"
+            "0 mm = Rohteiloberfläche liegt genau bei Z=0 (Standard).\n"
+            "Positiv = Material ragt über den Nullpunkt."
+        )
+        stock_form.addRow("Z-Oberfläche", self._stock_z_offset_spin)
+
+        # Höhe: stock height (0 = auto from path)
+        self._stock_height_spin = QDoubleSpinBox()
+        self._stock_height_spin.setRange(0.0, 2000.0)
+        self._stock_height_spin.setSingleStep(1.0)
+        self._stock_height_spin.setDecimals(1)
+        self._stock_height_spin.setSuffix(" mm")
+        self._stock_height_spin.setSpecialValueText("Auto")
+        self._stock_height_spin.setToolTip(
+            "Höhe des Rohteils in mm.\n"
+            "0 (Auto) = Höhe wird aus dem G-code-Pfad abgeleitet."
+        )
+        stock_form.addRow("Höhe", self._stock_height_spin)
+
+        # Radius: only for Round mode
+        self._stock_radius_label = QLabel("Radius")
+        self._stock_radius_spin  = QDoubleSpinBox()
+        self._stock_radius_spin.setRange(1.0, 2000.0)
+        self._stock_radius_spin.setSingleStep(5.0)
+        self._stock_radius_spin.setDecimals(1)
+        self._stock_radius_spin.setSuffix(" mm")
+        self._stock_radius_spin.setToolTip(
+            "Radius des zylindrischen Rohteils um den XY-Mittelpunkt\n"
+            "der Schnittbewegungen."
+        )
+        stock_form.addRow(self._stock_radius_label, self._stock_radius_spin)
+
+        root.addLayout(stock_form)
         root.addStretch()
 
         # Internal state
@@ -171,8 +227,14 @@ class SimPanel(QWidget):
         self._chk_voxel.toggled.connect(self._on_voxel_enabled_toggled)
         self._voxel_size_spin.valueChanged.connect(self._on_voxel_size_changed)
 
-        # Sync spinbox enabled state to current voxel checkbox state
+        self._stock_shape_combo.currentIndexChanged.connect(self._on_stock_shape_changed)
+        self._stock_z_offset_spin.valueChanged.connect(self._on_stock_z_offset_changed)
+        self._stock_height_spin.valueChanged.connect(self._on_stock_height_changed)
+        self._stock_radius_spin.valueChanged.connect(self._on_stock_radius_changed)
+
+        # Sync enabled states
         self._sync_voxel_size_state()
+        self._sync_stock_controls()
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -201,10 +263,44 @@ class SimPanel(QWidget):
             chk.setChecked(val)
             chk.blockSignals(False)
 
+        # Stock settings
+        try:
+            shape_idx = _SHAPE_KEYS.index(self._s.stock_shape)
+        except ValueError:
+            shape_idx = 0
+        self._stock_shape_combo.blockSignals(True)
+        self._stock_shape_combo.setCurrentIndex(shape_idx)
+        self._stock_shape_combo.blockSignals(False)
+
+        for spin, val in [
+            (self._stock_z_offset_spin, self._s.stock_z_offset_mm),
+            (self._stock_height_spin,   self._s.stock_height_mm),
+            (self._stock_radius_spin,   self._s.stock_round_radius_mm),
+        ]:
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+
     def _sync_voxel_size_state(self) -> None:
         """Enable/disable voxel size spinbox based on checkbox + availability."""
         enabled = _VOXEL_AVAILABLE and self._chk_voxel.isChecked()
         self._voxel_size_spin.setEnabled(enabled)
+
+    def _sync_stock_controls(self) -> None:
+        """Show/hide the radius row based on the current stock shape."""
+        is_round = (self._stock_shape_combo.currentIndex() == _SHAPE_KEYS.index("round"))
+        self._stock_radius_label.setVisible(is_round)
+        self._stock_radius_spin.setVisible(is_round)
+
+        # Disable all stock controls when sim not available
+        enabled = _VOXEL_AVAILABLE
+        for w in (
+            self._stock_shape_combo,
+            self._stock_z_offset_spin,
+            self._stock_height_spin,
+            self._stock_radius_spin,
+        ):
+            w.setEnabled(enabled)
 
     # ── Signal callbacks ──────────────────────────────────────────────────────
 
@@ -250,6 +346,20 @@ class SimPanel(QWidget):
             self._voxel_size_spin.blockSignals(False)
             return
         self._s.voxel_size = value
+
+    def _on_stock_shape_changed(self, index: int) -> None:
+        if 0 <= index < len(_SHAPE_KEYS):
+            self._s.stock_shape = _SHAPE_KEYS[index]
+            self._sync_stock_controls()
+
+    def _on_stock_z_offset_changed(self, value: float) -> None:
+        self._s.stock_z_offset_mm = value
+
+    def _on_stock_height_changed(self, value: float) -> None:
+        self._s.stock_height_mm = value
+
+    def _on_stock_radius_changed(self, value: float) -> None:
+        self._s.stock_round_radius_mm = value
 
     def set_sim_running(self, running: bool) -> None:
         """Called by DatumSimWidget to tell the panel whether a sim is active.
