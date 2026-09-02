@@ -74,6 +74,11 @@ class VoxelSimController:
     def grid(self) -> GpuVoxelGrid:
         return self._grid
 
+    @property
+    def max_s(self) -> float:
+        """High-water-mark: arc-length (mm) up to which material has been carved."""
+        return self._max_s
+
     # ── Playback interface ────────────────────────────────────────────────────
 
     def on_tick(self, current_s: float) -> bool:
@@ -115,6 +120,40 @@ class VoxelSimController:
         self._max_s   = current_s
         self._max_idx = new_idx
         return carved_any
+
+    def carve_move(
+        self,
+        start:     np.ndarray,
+        end:       np.ndarray,
+        tool:      ToolDefinition,
+        feed_rate: float = 1.0,
+    ) -> bool:
+        """
+        Carve one real-machine move (position-based, not arc-length based).
+
+        Used in MACHINE mode where the controller feeds live position updates
+        instead of a pre-computed toolpath.  Does not touch ``_max_s`` or
+        ``_max_idx`` (those are SIM-mode high-water-mark state).
+
+        Parameters
+        ----------
+        start, end :
+            World-space segment endpoints in mm.
+        tool :
+            Tool geometry to use for the carved volume.
+        feed_rate :
+            Feed rate of the move (mm/min).  Pass 0.0 or negative to skip
+            G0 rapid moves, which should not remove material.
+
+        Returns
+        -------
+        bool
+            True if the grid was modified (i.e. ``grid.is_dirty`` is set).
+        """
+        if feed_rate <= 0.0:
+            return False
+        self._carver.carve_segment(start, end, tool)
+        return self._grid.is_dirty
 
     def update_tool(self, tool: ToolDefinition) -> None:
         """Called when the simulation passes a T-command."""

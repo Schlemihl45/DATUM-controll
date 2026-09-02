@@ -370,11 +370,14 @@ class ControlHub(QWidget):
         reading sizeHint() — without this, Qt may return a stale value immediately
         after setVisible() and the widget gets the wrong height.
         """
+        # isHidden() checks the widget's own visibility flag, independent of
+        # parent state.  isVisible() returns False when any ancestor is hidden,
+        # so it would permanently block the container from ever appearing.
         any_vis = (
-            self._datum_lbl.isVisible()
-            or self._gcode_lbl.isVisible()
-            or self._tool_lbl.isVisible()
-            or self._feed_lbl.isVisible()
+            not self._datum_lbl.isHidden()
+            or not self._gcode_lbl.isHidden()
+            or not self._tool_lbl.isHidden()
+            or not self._feed_lbl.isHidden()
         )
         self._info_container.setVisible(any_vis)
         # Force the VBoxLayout to recalculate immediately (not deferred)
