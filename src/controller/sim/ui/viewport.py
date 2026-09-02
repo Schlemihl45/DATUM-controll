@@ -345,24 +345,6 @@ class Viewport(QOpenGLWidget):
         """
         self._voxel_renderer = renderer
 
-    def upload_voxel_mesh(
-        self,
-        vertices: np.ndarray,
-        normals:  np.ndarray,
-        indices:  np.ndarray,
-    ) -> None:
-        """Upload a new voxel mesh to the VoxelRenderer.
-
-        Calls makeCurrent/doneCurrent around the GPU upload so this method can
-        safely be called from the main thread outside paintGL.
-        """
-        if self._voxel_renderer is None:
-            return
-        self.makeCurrent()
-        self._voxel_renderer.upload_mesh(vertices, normals, indices)
-        self.doneCurrent()
-        self.update()
-
     def set_window_gradient(self, top: str, bottom: str) -> None:
         """Update corner-fill gradient colors to match the active theme.
 

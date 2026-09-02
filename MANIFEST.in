@@ -1,4 +1,0 @@
-# Package data included in sdist and wheel.
-# scikit-build-core uses this for non-Python files that are not tracked by CMake.
-recursive-include src/controller/ui/resources *
-recursive-include src/controller/sim/assets   *

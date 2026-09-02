@@ -1,7 +1,6 @@
 # ── Build system ──────────────────────────────────────────────────────────────
 # Setuptools handles the Python src-layout package.
-# The optional C++ extension (voxel_mod / OpenVDB) is built separately —
-# see src/controller/sim/voxel/ext/CMakeLists.txt.
+# The voxel simulation is pure Python + numpy + GLSL — no C++ build needed.
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -39,9 +38,6 @@ where = ["src"]
 "*" = [
     "ui/resources/**/*",
     "sim/assets/**/*",
-    # compiled C++ extension — present only when built with cmake
-    "sim/voxel/*.so",
-    "sim/voxel/*.pyd",
 ]
 
 # ── Linting / typing ──────────────────────────────────────────────────────────

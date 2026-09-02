@@ -29,7 +29,8 @@ from PySide6.QtWidgets import (
 from controller.sim.core.settings import AppSettings
 from controller.sim.ui.viewport import PathMode, ToolMode
 
-# Check whether the C++ voxel extension is installed
+# Check whether the voxel simulation modules are importable
+# (requires numpy + moderngl, both already in dependencies)
 try:
     from controller.sim.voxel.controller import VoxelSimController as _VSC  # noqa: F401
     _VOXEL_AVAILABLE = True
@@ -123,13 +124,13 @@ class SimPanel(QWidget):
         else:
             self._chk_voxel.setEnabled(False)
             self._chk_voxel.setToolTip(
-                "Nicht verfügbar — die C++-Extension voxel_mod ist nicht installiert.\n"
-                "Installationsanleitung: siehe README / Dokumentation."
+                "Nicht verfügbar — die Voxel-Module konnten nicht importiert werden.\n"
+                "Stelle sicher dass numpy und moderngl installiert sind."
             )
         voxel_form.addRow("Aktivieren", self._chk_voxel)
 
         if not _VOXEL_AVAILABLE:
-            hint = QLabel("⚠ voxel_mod nicht installiert")
+            hint = QLabel("⚠ Voxel-Module nicht verfügbar")
             hint.setStyleSheet("color: #e0a040; font-size: 11px;")
             hint.setWordWrap(True)
             voxel_form.addRow("", hint)
