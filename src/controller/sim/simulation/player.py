@@ -12,7 +12,7 @@ Use is_finished (forward end) and is_at_start (reverse end) to detect each.
 """
 import time
 import numpy as np
-from controller.sim.gcode.path_buffer import PathBuffer
+from controller.sim.gcode.path_buffer import PathBuffer, DEFAULT_RAPID_FEED_MM_MIN
 
 
 class SimulationPlayer:
@@ -59,7 +59,7 @@ class SimulationPlayer:
             dt   = now - self._last_t
             feed = self._path.feed_at(self._s)
             if feed < 1e-6:
-                feed = 5_000.0          # default rapid feed when no feed set
+                feed = DEFAULT_RAPID_FEED_MM_MIN   # default rapid feed when no feed set
 
             ds       = (feed / 60.0) * dt * self.speed_scale
             self._s += ds

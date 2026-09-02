@@ -105,6 +105,12 @@ class DatumSimWidget(QWidget):
         self._current_tool:         ToolDefinition | None   = None
         self._last_program                                  = None
 
+        # Feed/rapid overrides (1.0 = 100%), pushed in from MACHINE mode via
+        # set_feed_override()/set_rapid_override() — drive the estimated
+        # part-time display; SIM mode simply leaves them at 1.0.
+        self._feed_override:  float = 1.0
+        self._rapid_override: float = 1.0
+
         # Voxel objects (all None until _create_voxel_sim() runs after initializeGL)
         self._voxel_ctrl:     VoxelSimController | None = None
         self._voxel_renderer: VoxelRenderer | None      = None
@@ -164,11 +170,8 @@ class DatumSimWidget(QWidget):
         self.set_tool_mode(self._TOOL_MAP.get(s.tool_mode, ToolMode.CYLINDER))
         self.set_path_mode(self._PATH_MAP.get(s.path_mode, PathMode.PROGRESSIVE))
 
-        first_tool = (
-            get_tool(program.tool_changes[0].tool_number)
-            if program.tool_changes else get_tool(1)
-        )
-        self._apply_tool(first_tool)
+        self._apply_initial_tool()
+        self._recompute_part_time()
 
         if _VOXEL_AVAILABLE and s.voxel_enabled:
             self._schedule_voxel_sim()
@@ -305,6 +308,12 @@ class DatumSimWidget(QWidget):
         self._current_tool = tool
         self.viewport.set_tool_definition(tool)
         self.settings.sim_panel.set_current_tool(tool.tool_number)
+        # Push to the info pill directly rather than waiting for the next
+        # SIM-mode _tick() to refresh it — _tick()'s tool-label refresh only
+        # ran while self._mode == "SIM", so MACHINE-mode tool changes (via
+        # set_line() -> _check_tool_change()) and sim_reset() never reached
+        # the display until (if ever) SIM mode ticked again.
+        self.control_hub.set_tool(tool.tool_number)
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.update_tool(tool)
 
@@ -313,6 +322,47 @@ class DatumSimWidget(QWidget):
             if tc.line_index <= current_line and tc.line_index > self._last_tool_change_idx:
                 self._last_tool_change_idx = tc.line_index
                 self._apply_tool(get_tool(tc.tool_number))
+
+    def _apply_initial_tool(self) -> None:
+        """Apply the program's first tool and reset tool-change tracking.
+
+        Shared by set_file() (new program loaded) and sim_reset() (program
+        restarted from the beginning) so the tool info field always shows
+        the correct start-of-program tool rather than whatever tool was
+        last active before the reload/reset.
+        """
+        if self._last_program is None:
+            return
+        first_tool = (
+            get_tool(self._last_program.tool_changes[0].tool_number)
+            if self._last_program.tool_changes else get_tool(1)
+        )
+        self._apply_tool(first_tool)
+
+    # ── Feed/rapid override + part-time estimate ──────────────────────────────
+
+    def set_feed_override(self, value: float) -> None:
+        """Push the machine's current feed override (1.0 = 100%) in from
+        outside — mirrors the set_position()/set_line() "pushed state"
+        style already used for MACHINE mode. Recomputes the displayed
+        part-time estimate."""
+        self._feed_override = value
+        self._recompute_part_time()
+
+    def set_rapid_override(self, value: float) -> None:
+        """Push the machine's current rapid override (1.0 = 100%) in from
+        outside. Recomputes the displayed part-time estimate."""
+        self._rapid_override = value
+        self._recompute_part_time()
+
+    def _recompute_part_time(self) -> None:
+        if self._last_program is None:
+            self.control_hub.set_part_time(None)
+            return
+        seconds = self._last_program.path.estimated_time_s(
+            self._feed_override, self._rapid_override,
+        )
+        self.control_hub.set_part_time(seconds)
 
     # ── Machine interface (SimPlaceholder-compatible API) ─────────────────────
 
@@ -335,6 +385,11 @@ class DatumSimWidget(QWidget):
 
     def set_line(self, line: int) -> None:
         self.viewport.set_active_line(line)
+        # Keep the tool info field correct during a real machine run too —
+        # previously only the SIM-mode _tick() loop applied tool changes,
+        # so the info field never moved past the program's first tool while
+        # MACHINE mode pushed lines in from the controller.
+        self._check_tool_change(line)
 
     # ── Mode ──────────────────────────────────────────────────────────────────
 
@@ -348,6 +403,11 @@ class DatumSimWidget(QWidget):
         # accidentally carve a phantom segment from the last known position.
         self._last_machine_pos      = None
         self._pending_machine_carve = None
+        # Reset tool-change tracking so a MACHINE run always re-evaluates T
+        # changes from the start of the program, independent of how far SIM
+        # playback had already progressed before switching modes.
+        self._last_tool_change_idx = -1
+        self._apply_initial_tool()
 
     def set_path_mode(self, mode: PathMode) -> None:
         self._path_mode = mode
@@ -383,6 +443,7 @@ class DatumSimWidget(QWidget):
         if self._player:
             self._player.reset()
             self._last_tool_change_idx = -1
+            self._apply_initial_tool()
             self.control_hub.reset_play_state()
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.reset()
@@ -489,8 +550,8 @@ class DatumSimWidget(QWidget):
             feed = self._player._path.feed_at(s)
             self.control_hub.set_feedrate(feed)
             self.control_hub.set_datum(getattr(self.viewport, "_active_wcs", 1))
-            if self._current_tool:
-                self.control_hub.set_tool(self._current_tool.tool_number)
+            # (tool pill is now pushed directly from _apply_tool(), not
+            # refreshed here — see its docstring)
 
             # Voxel carving: small backlogs are carved synchronously right
             # here so the tool marker and the carved material are always for
