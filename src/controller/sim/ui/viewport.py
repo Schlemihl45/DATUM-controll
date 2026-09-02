@@ -164,6 +164,35 @@ def _build_axes(axis_len: float = 40.0):
     return np.array(verts, dtype='f4'), np.array(cols, dtype='f4')
 
 
+def _build_axis_cones(axis_len: float = 40.0, cone_len: float = 4.0,
+                       cone_r: float = 1.2, segments: int = 12):
+    """Cone arrowheads at the positive tip of each XYZ axis.
+
+    Each cone is built as *segments* triangles sharing a common tip vertex.
+    The same _VERT/_FRAG shader is used (in_pos + in_col + u_mvp).
+    """
+    verts, cols = [], []
+    # (fwd_axis_index, right_axis_index, up_axis_index, color)
+    for fwd_i, right_i, up_i, color in [
+        (0, 1, 2, [1.0, 0.2, 0.2]),   # X → right=Y, up=Z
+        (1, 0, 2, [0.2, 1.0, 0.2]),   # Y → right=X, up=Z
+        (2, 0, 1, [0.4, 0.6, 1.0]),   # Z → right=X, up=Y
+    ]:
+        fwd      = np.zeros(3, dtype='f4'); fwd[fwd_i]   = 1.0
+        right    = np.zeros(3, dtype='f4'); right[right_i] = 1.0
+        up       = np.zeros(3, dtype='f4'); up[up_i]       = 1.0
+        tip      = fwd * (axis_len + cone_len)
+        base_ctr = fwd * axis_len
+        for j in range(segments):
+            a1 = j       * 2.0 * np.pi / segments
+            a2 = (j + 1) * 2.0 * np.pi / segments
+            p1 = base_ctr + right * float(np.cos(a1)) * cone_r + up * float(np.sin(a1)) * cone_r
+            p2 = base_ctr + right * float(np.cos(a2)) * cone_r + up * float(np.sin(a2)) * cone_r
+            verts += [tip.tolist(), p1.tolist(), p2.tolist()]
+            cols  += [color, color, color]
+    return np.array(verts, dtype='f4'), np.array(cols, dtype='f4')
+
+
 def _build_grid(grid_range: int = 200, grid_step: int = 10):
     """Build vertex + color arrays for the XY grid plane lines only."""
     verts, cols = [], []
@@ -291,6 +320,10 @@ class Viewport(QOpenGLWidget):
         # Live color updates from settings
         s.bg_color_changed.connect(self._on_bg_changed)
         s.bg_color_2_changed.connect(self._on_bg2_changed)
+        # Voxel color change: the VoxelRenderer updates its shader uniform via its
+        # own connection; we only need to trigger a repaint so the new color shows
+        # immediately without waiting for the next camera-move event.
+        s.voxel_color_changed.connect(lambda _: self.update())
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -397,6 +430,16 @@ class Viewport(QOpenGLWidget):
         )
         self._axes_vert_count = len(ax_v)
 
+        cone_v, cone_c = _build_axis_cones()
+        self._axes_cone_vao = self.ctx.vertex_array(
+            self._prog,
+            [
+                (self.ctx.buffer(cone_v.tobytes()), '3f', 'in_pos'),
+                (self.ctx.buffer(cone_c.tobytes()), '3f', 'in_col'),
+            ],
+        )
+        self._axes_cone_vert_count = len(cone_v)
+
         gr_v, gr_c = _build_grid()
         self._grid_vao = self.ctx.vertex_array(
             self._prog,
@@ -487,7 +530,10 @@ class Viewport(QOpenGLWidget):
         self._prog['u_mvp'].write(mvp.T.tobytes())
 
         if self._show_axes:
+            self.ctx.line_width = 2.0   # best-effort — Core profile may clamp to 1.0
             self._axes_vao.render(moderngl.LINES, vertices=self._axes_vert_count)
+            self.ctx.line_width = 1.0
+            self._axes_cone_vao.render(moderngl.TRIANGLES, vertices=self._axes_cone_vert_count)
         if self._show_grid:
             self._grid_vao.render(moderngl.LINES, vertices=self._grid_vert_count)
 
