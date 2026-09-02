@@ -14,12 +14,18 @@ OpenGL 3.3 compatible — no compute shaders required.
 
 Thread safety
 -------------
-``carve()`` is called from the background carve thread; ``upload_if_dirty()``
-is called from the Qt main (GL) thread.  The two methods share ``_dirty_tiles``
-(a Python set).  The fix: ``upload_if_dirty()`` snapshots the set with
-``list()`` before iterating, then removes only the processed keys afterwards.
-New tiles added by ``carve()`` while the upload loop is running will stay in
-the set and be uploaded on the next tick.
+``carve()`` is called by whichever single thread is currently driving the
+voxel controller's ``on_tick()`` — the Qt main thread for small per-tick
+backlogs, or one background worker thread for large ones, never both at the
+same instant (see ``VoxelSimController``'s thread-safety note); at most one
+writer exists at any moment, though which thread that is can change from one
+call to the next. ``upload_if_dirty()`` always runs on the Qt main (GL)
+thread. The two methods share ``_dirty_tiles`` (a Python set); when the
+current carve writer is a background thread, its adds can race with a
+concurrent ``upload_if_dirty()`` iteration. The fix: ``upload_if_dirty()``
+snapshots the set with ``list()`` before iterating, then removes only the
+processed keys afterwards. New tiles added by ``carve()`` while the upload
+loop is running will stay in the set and be uploaded on the next tick.
 
 Architecture / extension notes
 -------------------------------

@@ -1,24 +1,30 @@
 """
 sim/voxel/controller.py — VoxelSimController.
 
-Coordinates the High-Water-Mark path dispatch, CPU carving, and GPU
-texture upload.  No worker thread — all operations run synchronously on
-the Qt main thread, which keeps the code simple and correct.
+Coordinates the High-Water-Mark path dispatch and CPU carving; GPU texture
+upload is the caller's responsibility (``grid.upload_if_dirty()``).
 
 High-Water-Mark algorithm
 --------------------------
-``_max_processed_s`` tracks the furthest arc-length that has already been
-carved.  Advancing past it queues new segments; rewinding does not re-carve
-existing material (the tool cannot un-remove chips).
+``_max_s`` / ``_max_idx`` track the furthest arc-length (and corresponding
+path index) already carved.  Advancing past it carves new segments;
+rewinding does not re-carve existing material (the tool cannot un-remove
+chips).
 
 Call ``reset()`` to rebuild the stock from scratch (e.g. after the user
 presses the Reset button or changes voxel_size).
 
 Thread safety
 -------------
-All methods must be called from the Qt main thread.  The GPU upload
-(``grid.upload_if_dirty()``) must be called with the GL context current —
-the caller (``DatumSimWidget._tick``) is responsible for ``makeCurrent()``.
+``on_tick()`` mutates ``_max_s``/``_max_idx`` and is NOT safe to call
+concurrently from two threads.  ``DatumSimWidget`` calls it either
+synchronously from the Qt main thread (small per-tick backlogs) or from a
+single background worker thread (large backlogs) — never both at once: a
+new call is only ever dispatched once any previous background worker has
+fully finished, so at any instant there is exactly one caller. The GPU
+upload (``grid.upload_if_dirty()``) must be called with the GL context
+current — the caller (``DatumSimWidget._tick`` / ``_drive_voxel_carve`` /
+``_force_carve_catchup``) is responsible for ``makeCurrent()``.
 """
 from __future__ import annotations
 

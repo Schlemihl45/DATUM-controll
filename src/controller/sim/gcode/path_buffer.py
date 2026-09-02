@@ -8,7 +8,7 @@ from controller.sim.gcode.motion_planner import (
 
 class PathBuffer:
 
-    def __init__(self, segments: list[MotionSegment], arc_tess_deg: float = 1.0):
+    def __init__(self, segments: list[MotionSegment], max_step_mm: float = 1.0):
         # Local lists — not retained after conversion
         positions:   list[np.ndarray] = [np.zeros(3)]
         arc_lengths: list[float]      = [0.0]
@@ -16,10 +16,8 @@ class PathBuffer:
         line_ids:    list[int]        = [0]
         total_s = 0.0
 
-        max_linear_step = 1.0
-
         for seg in segments:
-            pts, feeds = PathBuffer._tessellate(seg, arc_tess_deg)
+            pts, feeds = PathBuffer._tessellate(seg, max_step_mm)
 
             for p, f in zip(pts, feeds):
                 step     = float(np.linalg.norm(p - positions[-1]))
@@ -76,14 +74,29 @@ class PathBuffer:
 
     # ── Tessellation ──────────────────────────────────────────────────────────
 
+    # Arcs/helices get at least one point every this many degrees, regardless
+    # of how coarse max_step_mm alone would allow for a small radius.
+    # Without this floor, a very small-radius full circle (e.g. a 0.25 mm
+    # helical-drilling relief cut) would tessellate to as few as 2 points,
+    # whose *chord* sum can undershoot the true arc length by a large margin
+    # (a 2-point circle: chord sum = 4r vs. true circumference 2*pi*r, a 36%
+    # deficit) — and PathBuffer.total_length (built from those chords) is
+    # exactly what SimulationPlayer paces wall-clock playback against, so a
+    # large deficit there would desync tool speed from the programmed feed
+    # rate. 30 degrees keeps that error under ~1% (n=12) at negligible extra
+    # cost — still a ~30x reduction from the old fixed-1deg-step count for a
+    # tiny circle, while barely changing anything for larger arcs (see
+    # _tessellate_arc/_tessellate_helix below).
+    _ARC_ANGLE_FLOOR_DEG = 30.0
+
     @staticmethod
-    def _tessellate(seg, tess_deg):
+    def _tessellate(seg, max_step_mm):
         if isinstance(seg, LinearSegment):
-            return PathBuffer._tessellate_linear(seg)
+            return PathBuffer._tessellate_linear(seg, max_step_mm)
         if isinstance(seg, ArcSegment):
-            return PathBuffer._tessellate_arc(seg, tess_deg)
+            return PathBuffer._tessellate_arc(seg, max_step_mm)
         if isinstance(seg, HelixSegment):
-            return PathBuffer._tessellate_helix(seg, tess_deg)
+            return PathBuffer._tessellate_helix(seg, max_step_mm)
         return [], []
 
     @staticmethod
@@ -103,14 +116,46 @@ class PathBuffer:
         return points, [f] * len(points)
 
     @staticmethod
-    def _tessellate_arc(seg: ArcSegment, tess_deg: float):
+    def _arc_point_count(radius: float, sweep: float, max_step_mm: float) -> int:
+        """
+        Number of tessellation points for a bogen/helix sweep of *sweep*
+        radians at *radius*.
+
+        Sized from PHYSICAL arc length (radius * sweep), mirroring
+        _tessellate_linear's max_step_mm — not from a fixed angular step.
+        A fixed-degree step (the old scheme) makes physical step size
+        proportional to radius, so a small-radius arc (e.g. a 0.25 mm
+        helical-drilling relief circle) gets exactly as many points as a
+        large one despite being physically tiny: a full circle at 1 degree
+        steps is always 360 points, whether its radius is 0.25 mm or 250 mm.
+        For a 0.25 mm circle that's a physical step of ~0.0044 mm — far
+        finer than any voxel resolution in use — and each of those 360
+        points becomes a separate carve_segment() call downstream
+        (VoxelSimController.on_tick), each paying the same fixed per-call
+        overhead regardless of how little segment it actually covers. Basing
+        n on arc length instead collapses that to a handful of points for
+        small arcs while leaving large-radius arcs essentially unchanged
+        (their physical-length-driven point count was already comparable to
+        the old fixed-degree scheme). The _ARC_ANGLE_FLOOR_DEG term bounds
+        the chord-length approximation error for very coarse cases (see its
+        docstring above).
+        """
+        arc_length = radius * sweep
+        return max(
+            2,
+            int(np.ceil(arc_length / max_step_mm)),
+            int(np.ceil(np.degrees(sweep) / PathBuffer._ARC_ANGLE_FLOOR_DEG)),
+        )
+
+    @staticmethod
+    def _tessellate_arc(seg: ArcSegment, max_step_mm: float):
         a_s = np.arctan2(seg.start[1] - seg.center[1], seg.start[0] - seg.center[0])
         a_e = np.arctan2(seg.end[1]   - seg.center[1], seg.end[0]   - seg.center[0])
         if seg.clockwise:
             if a_e >= a_s: a_e -= 2 * np.pi
         else:
             if a_e <= a_s: a_e += 2 * np.pi
-        n      = max(2, int(np.degrees(abs(a_e - a_s)) / tess_deg))
+        n      = PathBuffer._arc_point_count(seg.radius, abs(a_e - a_s), max_step_mm)
         angles = np.linspace(a_s, a_e, n + 1)[1:]
         points = []
         for a in angles:
@@ -122,14 +167,14 @@ class PathBuffer:
         return points, [seg.feed_rate] * len(points)
 
     @staticmethod
-    def _tessellate_helix(seg: HelixSegment, tess_deg: float):
+    def _tessellate_helix(seg: HelixSegment, max_step_mm: float):
         a_s = np.arctan2(seg.start[1] - seg.center[1], seg.start[0] - seg.center[0])
         a_e = np.arctan2(seg.end[1]   - seg.center[1], seg.end[0]   - seg.center[0])
         if seg.clockwise:
             if a_e >= a_s: a_e -= 2 * np.pi
         else:
             if a_e <= a_s: a_e += 2 * np.pi
-        n      = max(2, int(np.degrees(abs(a_e - a_s)) / tess_deg))
+        n      = PathBuffer._arc_point_count(seg.radius, abs(a_e - a_s), max_step_mm)
         angles = np.linspace(a_s, a_e, n + 1)[1:]
         z_vals = np.linspace(seg.start[2], seg.end[2], n + 1)[1:]
         points = []

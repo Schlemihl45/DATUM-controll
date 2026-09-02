@@ -55,6 +55,21 @@ try:
 except ImportError:
     _VOXEL_AVAILABLE = False
 
+# Backlog (mm of arc-length still needing to be carved) below which _tick()
+# carves synchronously, in-tick, on the main/GL thread instead of handing it
+# to the background worker. Derived from the worst plausible single-tick
+# advance: max speed-slider multiplier (20x, see control_hub.py _SPEED_MAX)
+# x a generous cutting-feed ceiling (5000 mm/min) / 60 x the 32ms tick
+# interval ~= 53mm; the highest cutting feed actually used in
+# workpieces/Gcode.cnc (1828.8 mm/min) gives ~= 19.5mm at 20x, so 40mm leaves
+# real margin either way. This is only a soft performance/UX threshold —
+# exceeding it never produces a wrong result, it just routes to the (already
+# correct) chunked background path instead of carving inline. It relies on
+# PathBuffer capping tessellated-point density to ~1-2 points/mm (see
+# path_buffer.py's max_step_mm) — without that bound this threshold would not
+# actually bound per-tick carve cost.
+_SYNC_CARVE_MAX_MM = 40.0
+
 
 class DatumSimWidget(QWidget):
     """Top-level 3D simulation widget — drop-in replacement for SimPlaceholder."""
@@ -353,6 +368,7 @@ class DatumSimWidget(QWidget):
     def sim_pause(self) -> None:
         if self._player:
             self._player.pause()
+        self._force_carve_catchup()
 
     def sim_reset(self) -> None:
         # Stop any in-flight carving thread first to avoid writing to the grid
@@ -476,26 +492,14 @@ class DatumSimWidget(QWidget):
             if self._current_tool:
                 self.control_hub.set_tool(self._current_tool.tool_number)
 
-            # Voxel carving runs in a background thread so the main-thread
-            # controller UI is never blocked by long numpy operations.
+            # Voxel carving: small backlogs are carved synchronously right
+            # here so the tool marker and the carved material are always for
+            # the same `s`; only large backlogs (seeks/skips) go through the
+            # background worker so the UI thread never stalls. See
+            # _drive_voxel_carve()'s docstring.
             if self._voxel_ctrl is not None:
-                # If the worker flagged new carved data, upload to GPU now.
-                if self._carve_done.is_set():
-                    self._carve_done.clear()
-                    self.viewport.makeCurrent()
-                    self._voxel_ctrl.grid.upload_if_dirty()
-                    self.viewport.doneCurrent()
-
-                # Launch a new worker frame if the previous one is done.
-                if self._carve_thread is None or not self._carve_thread.is_alive():
-                    ctrl = self._voxel_ctrl   # capture; teardown may null self._voxel_ctrl
-                    self._carve_thread = threading.Thread(
-                        target=self._carve_worker,
-                        args=(ctrl, s),
-                        daemon=True,
-                        name="voxel-carver",
-                    )
-                    self._carve_thread.start()
+                ctrl = self._voxel_ctrl   # capture; teardown may null self._voxel_ctrl
+                self._drive_voxel_carve(ctrl, s)
 
         elif self._mode == "MACHINE" and self._voxel_ctrl is not None:
             # MACHINE mode: carve from real machine positions delivered via
@@ -525,6 +529,84 @@ class DatumSimWidget(QWidget):
                     self._carve_thread.start()
 
         self.viewport.update()
+
+    def _drive_voxel_carve(self, ctrl: "VoxelSimController", s: float) -> None:
+        """Advance voxel carving to *s*, keeping the displayed tool position
+        and the carved material provably in sync for normal playback.
+
+        Small backlogs (`s - ctrl.max_s`) are carved synchronously, in this
+        call, on the calling (Qt main/GL) thread — so the grid upload below
+        always reflects the exact same `s` the tool marker was just set to
+        this frame. Large backlogs (a seek/skip jump, or any unexpectedly
+        heavy stretch of path) fall back to the existing chunked background
+        worker so the UI thread is never blocked for long. The two paths are
+        mutually exclusive by construction: a new synchronous or background
+        pass is only ever started once any previous background worker has
+        fully finished (`is_alive()` is False only after its target callable
+        has returned), so on_tick()/carve_segment() are never called from two
+        threads at once against the same controller/grid.
+        """
+        # Flush anything a still/previously-running background worker produced.
+        if self._carve_done.is_set():
+            self._carve_done.clear()
+            self.viewport.makeCurrent()
+            ctrl.grid.upload_if_dirty()
+            self.viewport.doneCurrent()
+
+        if self._carve_thread is not None and self._carve_thread.is_alive():
+            return  # background catch-up still running; re-check next tick
+
+        backlog = s - ctrl.max_s
+        if backlog <= 0.0:
+            return  # rewinding, or already caught up
+
+        if backlog <= _SYNC_CARVE_MAX_MM:
+            if ctrl.on_tick(s):
+                self.viewport.makeCurrent()
+                ctrl.grid.upload_if_dirty()
+                self.viewport.doneCurrent()
+        else:
+            self._carve_thread = threading.Thread(
+                target=self._carve_worker,
+                args=(ctrl, s),
+                daemon=True,
+                name="voxel-carver",
+            )
+            self._carve_thread.start()
+
+    def _force_carve_catchup(self) -> None:
+        """Guarantee the voxel state is fully caught up to the player's
+        current position right now — call whenever the tool visibly stops
+        (paused, or playback naturally finished/reversed to start).
+
+        If a background worker is still chewing through a large backlog at
+        that exact moment, wait for it (bounded) rather than leaving it to
+        trickle across future frames, then run one final synchronous
+        on_tick() pass for whatever (if anything) remains.
+        """
+        if self._voxel_ctrl is None or self._player is None:
+            return
+        ctrl = self._voxel_ctrl
+
+        if self._carve_thread is not None and self._carve_thread.is_alive():
+            # Bounded: background chunks are 5mm each (_carve_worker's
+            # CHUNK_MM), so this returns well under the timeout in all but
+            # truly pathological cases.
+            self._carve_thread.join(timeout=2.0)
+
+        if self._carve_done.is_set():
+            self._carve_done.clear()
+            self.viewport.makeCurrent()
+            ctrl.grid.upload_if_dirty()
+            self.viewport.doneCurrent()
+
+        # Only safe to carve synchronously if no thread is still alive (the
+        # join above could in principle time out on a pathological backlog).
+        if self._carve_thread is None or not self._carve_thread.is_alive():
+            if ctrl.on_tick(self._player.current_s()):
+                self.viewport.makeCurrent()
+                ctrl.grid.upload_if_dirty()
+                self.viewport.doneCurrent()
 
     def _carve_worker(self, ctrl: "VoxelSimController", s_target: float) -> None:
         """Background thread: advance HWM carving to *s_target* in 5 mm chunks.
@@ -565,6 +647,7 @@ class DatumSimWidget(QWidget):
 
     def _on_sim_finished(self) -> None:
         self.control_hub.reset_play_state()
+        self._force_carve_catchup()
 
     # ── Overlay layout ────────────────────────────────────────────────────────
 
