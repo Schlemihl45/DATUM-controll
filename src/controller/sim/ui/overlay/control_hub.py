@@ -119,18 +119,6 @@ QSlider::handle:horizontal:hover { background: #FFFFFF; }
 """
 
 
-# ── Helper: format a duration for the part-time pill ──────────────────────────
-
-def _format_duration(seconds: float) -> str:
-    """Format seconds as "M:SS", or "H:MM:SS" once an hour is reached."""
-    total = max(0, int(round(seconds)))
-    h, rem = divmod(total, 3600)
-    m, s   = divmod(rem, 60)
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
-
-
 # ── Helper: load SVG icon ─────────────────────────────────────────────────────
 
 def _svg_icon(name: str, size: int = 24) -> QIcon:
@@ -339,23 +327,17 @@ class ControlHub(QWidget):
         self._feed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._feed_lbl.setStyleSheet(_LABEL_STYLE)
 
-        self._time_lbl = QLabel("--:--", self._info_container)
-        self._time_lbl.setFixedWidth(64)
-        self._time_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._time_lbl.setStyleSheet(_LABEL_STYLE)
-
         info_row.addWidget(self._datum_lbl)
         info_row.addWidget(self._gcode_lbl)
         info_row.addWidget(self._tool_lbl)
         info_row.addWidget(self._feed_lbl)
-        info_row.addWidget(self._time_lbl)
 
         root.addWidget(self._info_container)
 
         # Initial visibility from settings
         self._apply_visibility(
             self._s.show_gcode_line, self._s.show_datum,
-            self._s.show_tool, self._s.show_feedrate, self._s.show_part_time,
+            self._s.show_tool, self._s.show_feedrate,
         )
 
         # Connect signals
@@ -371,18 +353,16 @@ class ControlHub(QWidget):
         self._s.show_datum_changed.connect(self._on_datum_vis)
         self._s.show_tool_changed.connect(self._on_tool_vis)
         self._s.show_feedrate_changed.connect(self._on_feedrate_vis)
-        self._s.show_part_time_changed.connect(self._on_part_time_vis)
 
     # ── Visibility management ─────────────────────────────────────────────────
 
     def _apply_visibility(
-        self, gcode: bool, datum: bool, tool: bool, feedrate: bool, part_time: bool = True,
+        self, gcode: bool, datum: bool, tool: bool, feedrate: bool,
     ) -> None:
         self._gcode_lbl.setVisible(gcode)
         self._datum_lbl.setVisible(datum)
         self._tool_lbl.setVisible(tool)
         self._feed_lbl.setVisible(feedrate)
-        self._time_lbl.setVisible(part_time)
         self._sync_info()
 
     def _sync_info(self) -> None:
@@ -400,7 +380,6 @@ class ControlHub(QWidget):
             or not self._gcode_lbl.isHidden()
             or not self._tool_lbl.isHidden()
             or not self._feed_lbl.isHidden()
-            or not self._time_lbl.isHidden()
         )
         self._info_container.setVisible(any_vis)
         # Force the VBoxLayout to recalculate immediately (not deferred)
@@ -428,10 +407,6 @@ class ControlHub(QWidget):
         self._feed_lbl.setVisible(visible)
         self._sync_info()
 
-    def _on_part_time_vis(self, visible: bool) -> None:
-        self._time_lbl.setVisible(visible)
-        self._sync_info()
-
     # ── Data setters ──────────────────────────────────────────────────────────
 
     def set_gcode(self, raw_text: str) -> None:
@@ -442,10 +417,6 @@ class ControlHub(QWidget):
 
     def set_tool(self, tool_number: int) -> None:
         self._tool_lbl.setText(f"T{tool_number}")
-
-    def set_part_time(self, seconds: float | None) -> None:
-        """Show the approximated total part/cycle time (whole program)."""
-        self._time_lbl.setText(_format_duration(seconds) if seconds is not None else "--:--")
 
     def set_feedrate(self, feed_mm_min: float) -> None:
         if feed_mm_min < 1.0:

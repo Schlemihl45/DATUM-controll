@@ -37,7 +37,6 @@ class AppSettings(QObject):
     show_datum_changed = Signal(bool)
     show_tool_changed = Signal(bool)
     show_feedrate_changed = Signal(bool)
-    show_part_time_changed = Signal(bool)
 
     tool_mode_changed = Signal(str)
     path_mode_changed = Signal(str)
@@ -298,16 +297,6 @@ class AppSettings(QObject):
     def show_feedrate(self, v: bool):
         self._qs.setValue("controlhub/show_feedrate", v)
         self.show_feedrate_changed.emit(v)
-
-    @property
-    def show_part_time(self) -> bool:
-        """Whether the estimated part/cycle time pill is shown. Default True."""
-        return self._qs.value("controlhub/show_part_time", True, type=bool)
-
-    @show_part_time.setter
-    def show_part_time(self, v: bool):
-        self._qs.setValue("controlhub/show_part_time", v)
-        self.show_part_time_changed.emit(v)
 
     @property
     def voxel_size(self) -> float:

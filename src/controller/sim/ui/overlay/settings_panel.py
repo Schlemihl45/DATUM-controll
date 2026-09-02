@@ -1,11 +1,10 @@
 """
 sim/ui/overlay/settings_panel.py — Right-edge slide-out settings panel.
 
-A narrow strip of checkable CardButtons (the same component used for
-navigation/toggle buttons throughout the rest of the app) toggles a wider
-content panel open/closed. Only one tab exists today: "Simulation"
-(sim/ui/overlay/panels/sim_panel.py — display, voxel, and stock settings,
-itself a left-nav + stacked-content layout, not horizontal tabs).
+A narrow strip of checkable CardButtons — one per settings section
+(Darstellung/Optik/Simulation/Rohteil, see sim_panel.py) — toggles a wider
+content panel open/closed, jumping straight to that section instead of
+opening to a single generic tab first.
 
 Both the strip and the panel use objectName="Card" with a "sim_overlay"
 variant (see ui/resources/styles/{dark,light}.qss) so their background
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from controller.sim.ui.overlay.panels.sim_panel import SimPanel
+from controller.sim.ui.overlay.panels.sim_panel import SECTION_ICONS, build_sections
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card_button import CardButton
 
@@ -33,9 +32,9 @@ PANEL_W = 320   # width of the expanded content panel
 class SettingsPanel(QWidget):
     """Overlay settings panel anchored to the right edge of DatumSimWidget.
 
-    A narrow strip of icon buttons serves as tabs. Clicking a tab toggles
-    the wider content panel open or closed. Clicking the active tab closes
-    the panel.
+    A narrow strip of icon buttons, one per settings section, serves as
+    tabs. Clicking a tab toggles the wider content panel open or closed,
+    showing that section directly. Clicking the active tab closes the panel.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -67,25 +66,16 @@ class SettingsPanel(QWidget):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.addWidget(self._stack)
 
-        # ── Tabs ──────────────────────────────────────────────────────────────
+        # ── One tab per settings section ────────────────────────────────────
         self._tabs: list[CardButton] = []
-        self._add_tab("scan-cube", "Simulation")
+        sections = build_sections(self._stack)
+        for (icon_name, tooltip), widget in zip(SECTION_ICONS, sections):
+            self._add_tab(icon_name, tooltip, widget)
         self._strip_layout.addStretch()
-
-        # ── Panels ────────────────────────────────────────────────────────────
-        self._sim_panel = SimPanel(self)
-        self._set_tab_content(0, self._sim_panel)
-
-    # ── Public ───────────────────────────────────────────────────────────────
-
-    @property
-    def sim_panel(self) -> SimPanel:
-        """The functional simulation settings panel."""
-        return self._sim_panel
 
     # ── Tab management ────────────────────────────────────────────────────────
 
-    def _add_tab(self, icon_name: str, tooltip: str) -> None:
+    def _add_tab(self, icon_name: str, tooltip: str, content: QWidget) -> None:
         index = len(self._tabs)
 
         btn = CardButton(icon=get_icon(icon_name, tint=True, size=QSize(22, 22)),
@@ -98,14 +88,7 @@ class SettingsPanel(QWidget):
 
         self._strip_layout.insertWidget(index, btn)
         self._tabs.append(btn)
-        self._stack.addWidget(QWidget())   # placeholder, replaced below
-
-    def _set_tab_content(self, index: int, widget: QWidget) -> None:
-        """Replace the placeholder widget at `index` with the real content."""
-        old = self._stack.widget(index)
-        self._stack.removeWidget(old)
-        old.deleteLater()
-        self._stack.insertWidget(index, widget)
+        self._stack.addWidget(content)
 
     def _on_tab_clicked(self, index: int) -> None:
         if self._panel_open and self._active == index:
