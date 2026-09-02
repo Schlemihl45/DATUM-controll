@@ -1,19 +1,10 @@
 # ── Build system ──────────────────────────────────────────────────────────────
-# scikit-build-core handles both the CMake C++ extension (voxel_mod) and the
-# Python src-layout package in one `pip install -e .` step.
-#
-# cmake and ninja are pip-installable — no separate system install needed.
-# nanobind is required by the C++ extension's CMakeLists.txt.
-# If OpenVDB is not found on the system, cmake.optional = true lets
-# scikit-build-core skip the extension and still install the Python package.
+# Setuptools handles the Python src-layout package.
+# The optional C++ extension (voxel_mod / OpenVDB) is built separately —
+# see src/controller/sim/voxel/ext/CMakeLists.txt.
 [build-system]
-requires = [
-    "scikit-build-core>=0.9",
-    "nanobind>=2.0",
-    "cmake>=3.18",
-    "ninja",
-]
-build-backend = "scikit_build_core.build"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 # ── Project metadata ──────────────────────────────────────────────────────────
 [project]
@@ -40,19 +31,18 @@ dev = [
 [project.scripts]
 datum-control = "controller.main:main"
 
-# ── scikit-build-core ─────────────────────────────────────────────────────────
-[tool.scikit-build]
-# src-layout: Python package lives in src/controller/
-wheel.packages = ["src/controller"]
+# ── setuptools: src-layout ────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+where = ["src"]
 
-# Release build for the C++ extension
-cmake.build-type = "Release"
-
-# If OpenVDB is not installed, the root CMakeLists.txt skips the extension
-# (find_package(OpenVDB QUIET) + conditional add_subdirectory).
-# cmake.optional = true means: if cmake itself fails for any reason,
-# scikit-build-core still completes the Python-only install without error.
-cmake.optional = true
+[tool.setuptools.package-data]
+"*" = [
+    "ui/resources/**/*",
+    "sim/assets/**/*",
+    # compiled C++ extension — present only when built with cmake
+    "sim/voxel/*.so",
+    "sim/voxel/*.pyd",
+]
 
 # ── Linting / typing ──────────────────────────────────────────────────────────
 [tool.ruff]
