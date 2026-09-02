@@ -170,11 +170,13 @@ class MachinePage(QWidget):
         self._gcode_stack.setCurrentIndex(_GCODE_NO_FILE)
 
         # ── Machine control buttons (right column) ────────────────────────────
-        self._start_btn = CardButton("Start", icon=get_icon("start", tint=True), icon_size=64)
-        self._stop_btn  = CardButton("Feed hold", icon=get_icon("stop",  tint=True), icon_size=64)
-        self._reset_btn = CardButton("Reset", icon=get_icon("reset", tint=True), icon_size=64)
+        # icon_size=36 keeps a 100×100 Card (16px margins → 68px content)
+        # balanced: 36px icon + 4px gap + ~16px label = 56px, neatly centred.
+        self._start_btn = CardButton("Start",     icon=get_icon("start",        tint=True), icon_size=36)
+        self._stop_btn  = CardButton("Feed hold", icon=get_icon("stop",         tint=True), icon_size=36)
+        self._reset_btn = CardButton("Reset",     icon=get_icon("reset",        tint=True), icon_size=36)
         self._single_block_btn = CardButton(
-            "Single Block", icon=get_icon("single_block", tint=True), icon_size=48
+            "Single Block", icon=get_icon("single_block", tint=True), icon_size=32
         )
         self._single_block_btn.setCheckable(True)
 
