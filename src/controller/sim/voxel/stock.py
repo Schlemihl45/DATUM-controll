@@ -1,72 +1,40 @@
 """
 sim/voxel/stock.py — Workpiece stock definition (pure Python / numpy).
 
-No C++ or OpenVDB required.  All geometry is derived from the G-code path
-bounding box plus a configurable margin.
+Stock shapes
+------------
+BOUNDING_BOX
+    Rectangular prism.  XY extent derived from G1/G2/G3 cutting moves +
+    margin.  Z top at ``z_offset_mm`` (default 0 = workpiece-zero surface);
+    Z bottom either auto (path z_min − margin) or explicit ``height_mm``.
 
-Classes
--------
-BoundingBox
-    Axis-aligned box in world-space mm.  Knows how to compute the voxel-grid
-    dimensions for a given voxel_size.
+ROUND
+    Cylinder centred on the XY centroid of the cutting moves.
+    Same Z convention as BOUNDING_BOX.
 
-StockDefinition
-    Binds a BoundingBox with a voxel_size and exposes grid_shape.
-
-Extension points (future)
--------------------------
-GCODE_EXTRACTED
-    Automatically derive the stock outline from the G-code moves rather than
-    using a rectangular bounding box.  Stub — raises NotImplementedError.
+All settings default to "auto from path" so the simulation works
+out-of-the-box even when no stock parameters are configured.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 
 import numpy as np
 
 
-class SourceType(Enum):
-    BOUNDING_BOX    = auto()   # implemented
-    GCODE_EXTRACTED = auto()   # stub, not yet implemented
+class StockShape(Enum):
+    BOUNDING_BOX = "bounding_box"
+    ROUND        = "round"
 
 
 @dataclass(frozen=True)
 class BoundingBox:
     """Axis-aligned bounding box in world-space millimetres."""
 
-    x_min: float
-    x_max: float
-    y_min: float
-    y_max: float
-    z_min: float
-    z_max: float
-
-    # ── Construction helpers ──────────────────────────────────────────────────
-
-    @staticmethod
-    def from_path_buffer(path, margin_mm: float = 5.0) -> "BoundingBox":
-        """Derive bbox from cutting moves only (G1/G2/G3 — feed_rate > 0).
-
-        G0 rapid moves are excluded: they travel above the workpiece and
-        would inflate the bounding box with air-clearance positions.
-        Falls back to all points if no cutting move is found.
-        """
-        pts   = path.points      # (N, 3) float32
-        feeds = path.feed_rates  # (N,)   float32  — 0.0 = rapid (G0)
-
-        mask = feeds > 0.0
-        cutting_pts = pts[mask] if mask.any() else pts   # fallback: all
-
-        return BoundingBox(
-            x_min=float(cutting_pts[:, 0].min()) - margin_mm,
-            x_max=float(cutting_pts[:, 0].max()) + margin_mm,
-            y_min=float(cutting_pts[:, 1].min()) - margin_mm,
-            y_max=float(cutting_pts[:, 1].max()) + margin_mm,
-            z_min=float(cutting_pts[:, 2].min()) - margin_mm,
-            z_max=float(cutting_pts[:, 2].max()) + margin_mm,
-        )
+    x_min: float;  x_max: float
+    y_min: float;  y_max: float
+    z_min: float;  z_max: float
 
     # ── Geometry queries ──────────────────────────────────────────────────────
 
@@ -88,27 +56,87 @@ class BoundingBox:
             dtype="f4",
         )
 
+    def xy_center(self) -> tuple[float, float]:
+        return (self.x_min + self.x_max) * 0.5, (self.y_min + self.y_max) * 0.5
+
 
 @dataclass
 class StockDefinition:
-    """Binds geometry (BoundingBox) with simulation resolution (voxel_size)."""
+    """
+    Complete stock specification: shape + voxel resolution + dimensional overrides.
 
-    bbox:       BoundingBox
-    voxel_size: float       = 0.5   # mm per voxel edge
-    source_type: SourceType = SourceType.BOUNDING_BOX
+    Build workflow (called by DatumSimWidget._create_voxel_sim):
+        stock = StockDefinition(...)
+        stock.build_bbox(path)          # derives bbox from path + settings
+        grid = GpuVoxelGrid(ctx, stock) # creates texture, applies shape mask
+    """
+
+    # ── Shape and resolution ──────────────────────────────────────────────────
+    shape:            StockShape = StockShape.BOUNDING_BOX
+    voxel_size:       float      = 0.5    # mm per voxel edge
+
+    # ── Dimensional overrides ─────────────────────────────────────────────────
+    # XY: margin around cutting-move extents (BOUNDING_BOX only)
+    xy_margin_mm:     float      = 5.0
+
+    # Z: stock top surface.  0.0 = workpiece zero (the typical case when
+    # Z=0 is set on the workpiece surface in the CNC program).
+    z_offset_mm:      float      = 0.0   # distance from Z=0 to stock top ↑
+
+    # Stock height.  0.0 means "auto": derive from path z_min + margin below.
+    height_mm:        float      = 0.0
+
+    # ROUND: cylinder radius from the XY centroid of the cutting extent.
+    round_radius_mm:  float      = 50.0
+
+    # ── Derived (set by build_bbox) ───────────────────────────────────────────
+    bbox: BoundingBox | None = field(default=None, repr=False)
+
+    # ── Construction ─────────────────────────────────────────────────────────
+
+    def build_bbox(self, path) -> "StockDefinition":
+        """
+        Compute and store the bounding box from the path and current settings.
+
+        Only G1/G2/G3 cutting moves (feed_rate > 0) are used for XY extent;
+        G0 rapids are excluded.  Returns self for chaining.
+        """
+        pts   = path.points       # (N, 3) float32
+        feeds = path.feed_rates   # (N,)   float32
+
+        mask        = feeds > 0.0
+        cutting_pts = pts[mask] if mask.any() else pts
+
+        # XY extents
+        margin = self.xy_margin_mm
+        x_min = float(cutting_pts[:, 0].min()) - margin
+        x_max = float(cutting_pts[:, 0].max()) + margin
+        y_min = float(cutting_pts[:, 1].min()) - margin
+        y_max = float(cutting_pts[:, 1].max()) + margin
+
+        if self.shape == StockShape.ROUND:
+            # Cylinder centred on cutting extent centroid
+            cx   = (x_min + x_max) * 0.5
+            cy   = (y_min + y_max) * 0.5
+            r    = self.round_radius_mm
+            x_min, x_max = cx - r, cx + r
+            y_min, y_max = cy - r, cy + r
+
+        # Z extents
+        z_top = self.z_offset_mm   # stock top = workpiece zero by default
+        if self.height_mm > 0.0:
+            z_bot = z_top - self.height_mm
+        else:
+            z_bot = float(cutting_pts[:, 2].min()) - margin
+
+        self.bbox = BoundingBox(x_min, x_max, y_min, y_max, z_bot, z_top)
+        return self
+
+    # ── Convenience ───────────────────────────────────────────────────────────
 
     @property
     def grid_shape(self) -> tuple[int, int, int]:
-        """(Nx, Ny, Nz) — number of voxels in each axis."""
+        """(Nx, Ny, Nz) — requires build_bbox() to have been called."""
+        if self.bbox is None:
+            raise RuntimeError("Call build_bbox(path) before accessing grid_shape")
         return self.bbox.grid_shape(self.voxel_size)
-
-    def resolve(self, program=None):
-        """Return self for BOUNDING_BOX; raise for stubs."""
-        if self.source_type == SourceType.BOUNDING_BOX:
-            return self
-        if self.source_type == SourceType.GCODE_EXTRACTED:
-            raise NotImplementedError(
-                "GCODE_EXTRACTED stock derivation is not yet implemented. "
-                "Use SourceType.BOUNDING_BOX for now."
-            )
-        raise ValueError(f"Unknown source type: {self.source_type!r}")

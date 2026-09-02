@@ -42,6 +42,12 @@ class AppSettings(QObject):
     voxel_enabled_changed = Signal(bool)
     voxel_color_changed   = Signal(str)
 
+    # Stock-shape signals (any change requires a sim rebuild)
+    stock_shape_changed         = Signal(str)
+    stock_z_offset_changed      = Signal(float)
+    stock_height_changed        = Signal(float)
+    stock_round_radius_changed  = Signal(float)
+
     # ── Voxel colour presets ───────────────────────────────────────────────────
     VOXEL_COLORS: dict[str, tuple[float, float, float]] = {
         "Orange-Gelb":  (0.95, 0.68, 0.12),
@@ -264,3 +270,45 @@ class AppSettings(QObject):
     def voxel_color_rgb(self) -> tuple[float, float, float]:
         """Current voxel colour as (r, g, b) floats 0–1."""
         return self.VOXEL_COLORS.get(self.voxel_color, (0.95, 0.68, 0.12))
+
+    # ── Stock shape settings ───────────────────────────────────────────────────
+
+    @property
+    def stock_shape(self) -> str:
+        """Stock shape: 'bounding_box' or 'round'. Default: 'bounding_box'."""
+        return self._qs.value("sim/stock_shape", "bounding_box", type=str)
+
+    @stock_shape.setter
+    def stock_shape(self, v: str) -> None:
+        self._qs.setValue("sim/stock_shape", v)
+        self.stock_shape_changed.emit(v)
+
+    @property
+    def stock_z_offset_mm(self) -> float:
+        """Distance from Z=0 to the stock top surface (mm). Default 0.0."""
+        return self._qs.value("sim/stock_z_offset_mm", 0.0, type=float)
+
+    @stock_z_offset_mm.setter
+    def stock_z_offset_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_z_offset_mm", float(v))
+        self.stock_z_offset_changed.emit(float(v))
+
+    @property
+    def stock_height_mm(self) -> float:
+        """Stock height in mm. 0.0 = auto (derived from cutting path)."""
+        return self._qs.value("sim/stock_height_mm", 0.0, type=float)
+
+    @stock_height_mm.setter
+    def stock_height_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_height_mm", float(v))
+        self.stock_height_changed.emit(float(v))
+
+    @property
+    def stock_round_radius_mm(self) -> float:
+        """Cylinder radius for ROUND stock (mm). Default 50.0."""
+        return self._qs.value("sim/stock_round_radius_mm", 50.0, type=float)
+
+    @stock_round_radius_mm.setter
+    def stock_round_radius_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_round_radius_mm", float(v))
+        self.stock_round_radius_changed.emit(float(v))

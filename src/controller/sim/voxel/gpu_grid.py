@@ -21,11 +21,7 @@ from __future__ import annotations
 import numpy as np
 import moderngl
 
-from controller.sim.voxel.stock import StockDefinition, BoundingBox
-
-
-# Sentinel meaning "no dirty region exists yet"
-_NO_DIRTY = None
+from controller.sim.voxel.stock import StockDefinition, StockShape, BoundingBox
 
 
 class GpuVoxelGrid:
@@ -37,11 +33,13 @@ class GpuVoxelGrid:
     ctx :
         Active ModernGL context (must be current when constructing).
     stock :
-        Geometry + resolution description.
+        Geometry + resolution description.  ``stock.bbox`` must already be
+        set (call ``stock.build_bbox(path)`` before constructing the grid).
     """
 
     def __init__(self, ctx: moderngl.Context, stock: StockDefinition) -> None:
         self._ctx        = ctx
+        self._stock      = stock
         self._bbox       = stock.bbox
         self._voxel_size = stock.voxel_size
 
@@ -50,7 +48,10 @@ class GpuVoxelGrid:
 
         # ── CPU material array ────────────────────────────────────────────────
         # Layout: _material[iz, iy, ix]  →  255 = workpiece, 0 = air
-        self._material: np.ndarray = np.full((nz, ny, nx), 255, dtype=np.uint8)
+        self._material: np.ndarray = np.empty((nz, ny, nx), dtype=np.uint8)
+
+        # Populate with the correct shape (fills _material in-place)
+        self._init_material()
 
         # ── GPU Texture3D (r8 — unsigned normalised, sampled as 0…1) ─────────
         # Texture3D size = (width, height, depth) = (Nx, Ny, Nz)
@@ -64,9 +65,50 @@ class GpuVoxelGrid:
 
         # ── Dirty region (voxel-index AABB) ──────────────────────────────────
         self._dirty: bool = False
-        self._dx = [nx, 0]   # [x_min, x_max)
-        self._dy = [ny, 0]
-        self._dz = [nz, 0]
+        nx2, ny2, nz2 = self._shape
+        self._dx = [nx2, 0]   # [x_min, x_max)
+        self._dy = [ny2, 0]
+        self._dz = [nz2, 0]
+
+    # ── Initialisation helpers ────────────────────────────────────────────────
+
+    def _init_material(self) -> None:
+        """
+        Fill ``self._material`` with the correct initial stock shape.
+
+        BOUNDING_BOX → all 255 (fully solid rectangular block).
+        ROUND        → voxels inside the cylinder = 255, outside = 0.
+        """
+        self._material[:] = 255
+
+        if self._stock.shape == StockShape.ROUND:
+            cx, cy = self._bbox.xy_center()
+            self._apply_round_mask(cx, cy, self._stock.round_radius_mm)
+
+    def _apply_round_mask(self, cx: float, cy: float, radius: float) -> None:
+        """
+        Zero out all voxels whose XY centre is outside the cylinder
+        ``(cx, cy, radius)``.  The Z extent is already set by the bbox.
+        """
+        bbox   = self._bbox
+        vs     = self._voxel_size
+        nx, ny, nz = self._shape
+        origin = bbox.origin()
+
+        # World-space XY centre of each voxel column
+        xs = origin[0] + (np.arange(nx, dtype="f4") + 0.5) * vs   # (Nx,)
+        ys = origin[1] + (np.arange(ny, dtype="f4") + 0.5) * vs   # (Ny,)
+
+        # Squared distance from cylinder axis — broadcast to (Ny, Nx)
+        dx = xs - cx
+        dy = ys - cy
+        r2 = dx[np.newaxis, :] ** 2 + dy[:, np.newaxis] ** 2       # (Ny, Nx)
+
+        # Boolean mask: True where the voxel column is OUTSIDE the cylinder
+        outside = r2 > (radius * radius)                            # (Ny, Nx)
+
+        # Apply across all Z slices — _material[iz, iy, ix]
+        self._material[:, outside] = 0
 
     # ── Read-only properties ──────────────────────────────────────────────────
 
@@ -124,8 +166,11 @@ class GpuVoxelGrid:
     # ── Reset ─────────────────────────────────────────────────────────────────
 
     def reset(self) -> None:
-        """Refill with solid material and mark the entire grid as dirty."""
-        self._material[:] = 255
+        """
+        Refill with solid material (respecting stock shape) and mark the
+        entire grid as dirty for a full GPU re-upload.
+        """
+        self._init_material()
         nx, ny, nz = self._shape
         self._dirty = True
         self._dx    = [0, nx]

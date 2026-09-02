@@ -117,13 +117,17 @@ void main() {
                 1.5 * u_voxel_size / u_grid_size.y,
                 1.5 * u_voxel_size / u_grid_size.z
             );
+            // Gradient direction: mat(uvw - e) - mat(uvw + e)
+            // This gives an OUTWARD-pointing normal (from solid into air).
+            // The naive (uvw+e)-(uvw-e) would point INTO the material and
+            // produce a near-zero diffuse term → dark cube visual bug.
             vec3 n = normalize(vec3(
-                texture(u_material, uvw + vec3(e.x, 0.0, 0.0)).r
-                    - texture(u_material, uvw - vec3(e.x, 0.0, 0.0)).r,
-                texture(u_material, uvw + vec3(0.0, e.y, 0.0)).r
-                    - texture(u_material, uvw - vec3(0.0, e.y, 0.0)).r,
-                texture(u_material, uvw + vec3(0.0, 0.0, e.z)).r
-                    - texture(u_material, uvw - vec3(0.0, 0.0, e.z)).r
+                texture(u_material, uvw - vec3(e.x, 0.0, 0.0)).r
+                    - texture(u_material, uvw + vec3(e.x, 0.0, 0.0)).r,
+                texture(u_material, uvw - vec3(0.0, e.y, 0.0)).r
+                    - texture(u_material, uvw + vec3(0.0, e.y, 0.0)).r,
+                texture(u_material, uvw - vec3(0.0, 0.0, e.z)).r
+                    - texture(u_material, uvw + vec3(0.0, 0.0, e.z)).r
             ));
 
             // ── Blinn-Phong shading ────────────────────────────────────────────
