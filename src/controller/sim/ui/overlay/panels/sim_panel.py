@@ -5,6 +5,7 @@ Shows simulation behavior settings:
   • Tool Display mode  — Endmill / Point / None
   • Path mode          — Complete / Progressive / None
   • Info label visibility toggles (WCS / G-code line / Tool / Feedrate)
+  • Abtragssimulation  — enable/disable toggle + voxel size (mm)
 
 The tool-database selector was intentionally removed: tool changes happen
 exclusively via T-commands in the G-code program, never through the UI.
@@ -27,6 +28,14 @@ from PySide6.QtWidgets import (
 
 from controller.sim.core.settings import AppSettings
 from controller.sim.ui.viewport import PathMode, ToolMode
+
+# Check whether the C++ voxel extension is installed
+try:
+    from controller.sim.voxel.controller import VoxelSimController as _VSC  # noqa: F401
+    _VOXEL_AVAILABLE = True
+    del _VSC
+except ImportError:
+    _VOXEL_AVAILABLE = False
 
 
 class SimPanel(QWidget):
@@ -99,24 +108,31 @@ class SimPanel(QWidget):
         info_form.addRow("Vorschub",         self._chk_feedrate)
         root.addLayout(info_form)
 
-        root.addStretch()
-
-        # Restore persisted values before connecting signals
-        self._load_saved()
-
-        self._tool_combo.currentIndexChanged.connect(self._on_tool_changed)
-        self._path_combo.currentIndexChanged.connect(self._on_path_changed)
-
-        self._chk_datum.toggled.connect(self._on_datum_toggled)
-        self._chk_gcode.toggled.connect(self._on_gcode_toggled)
-        self._chk_tool.toggled.connect(self._on_tool_toggled)
-        self._chk_feedrate.toggled.connect(self._on_feedrate_toggled)
-
-        # ── Voxel simulation settings ────────────────────────────────────────
-        root.addWidget(_section_label("Voxelgröße"))
+        # ── Abtragssimulation ─────────────────────────────────────────────────
+        root.addWidget(_section_label("Abtragssimulation"))
         voxel_form = QFormLayout()
         voxel_form.setContentsMargins(0, 0, 0, 0)
         voxel_form.setSpacing(8)
+
+        self._chk_voxel = QCheckBox()
+        if _VOXEL_AVAILABLE:
+            self._chk_voxel.setToolTip(
+                "Aktiviert die voxelbasierte Materialabtragssimulation.\n"
+                "Das Rohteil wird als OpenVDB Level-Set simuliert."
+            )
+        else:
+            self._chk_voxel.setEnabled(False)
+            self._chk_voxel.setToolTip(
+                "Nicht verfügbar — die C++-Extension voxel_mod ist nicht installiert.\n"
+                "Installationsanleitung: siehe README / Dokumentation."
+            )
+        voxel_form.addRow("Aktivieren", self._chk_voxel)
+
+        if not _VOXEL_AVAILABLE:
+            hint = QLabel("⚠ voxel_mod nicht installiert")
+            hint.setStyleSheet("color: #e0a040; font-size: 11px;")
+            hint.setWordWrap(True)
+            voxel_form.addRow("", hint)
 
         self._voxel_size_spin = QDoubleSpinBox()
         self._voxel_size_spin.setRange(0.05, 5.0)
@@ -134,10 +150,28 @@ class SimPanel(QWidget):
         voxel_form.addRow("Voxelgröße", self._voxel_size_spin)
         root.addLayout(voxel_form)
 
-        # Internal state: track whether a sim is currently running
+        root.addStretch()
+
+        # Internal state
         self._sim_running: bool = False
 
+        # ── Restore persisted values before connecting signals ────────────────
+        self._load_saved()
+
+        # ── Connect signals ───────────────────────────────────────────────────
+        self._tool_combo.currentIndexChanged.connect(self._on_tool_changed)
+        self._path_combo.currentIndexChanged.connect(self._on_path_changed)
+
+        self._chk_datum.toggled.connect(self._on_datum_toggled)
+        self._chk_gcode.toggled.connect(self._on_gcode_toggled)
+        self._chk_tool.toggled.connect(self._on_tool_toggled)
+        self._chk_feedrate.toggled.connect(self._on_feedrate_toggled)
+
+        self._chk_voxel.toggled.connect(self._on_voxel_enabled_toggled)
         self._voxel_size_spin.valueChanged.connect(self._on_voxel_size_changed)
+
+        # Sync spinbox enabled state to current voxel checkbox state
+        self._sync_voxel_size_state()
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -155,20 +189,21 @@ class SimPanel(QWidget):
             self._path_combo.setCurrentIndex(idx)
 
         # Checkboxes: block signals while restoring to avoid double-setting
-        self._chk_datum.blockSignals(True)
-        self._chk_gcode.blockSignals(True)
-        self._chk_tool.blockSignals(True)
-        self._chk_feedrate.blockSignals(True)
+        for chk, val in [
+            (self._chk_datum,    self._s.show_datum),
+            (self._chk_gcode,    self._s.show_gcode_line),
+            (self._chk_tool,     self._s.show_tool),
+            (self._chk_feedrate, self._s.show_feedrate),
+            (self._chk_voxel,    self._s.voxel_enabled and _VOXEL_AVAILABLE),
+        ]:
+            chk.blockSignals(True)
+            chk.setChecked(val)
+            chk.blockSignals(False)
 
-        self._chk_datum.setChecked(self._s.show_datum)
-        self._chk_gcode.setChecked(self._s.show_gcode_line)
-        self._chk_tool.setChecked(self._s.show_tool)
-        self._chk_feedrate.setChecked(self._s.show_feedrate)
-
-        self._chk_datum.blockSignals(False)
-        self._chk_gcode.blockSignals(False)
-        self._chk_tool.blockSignals(False)
-        self._chk_feedrate.blockSignals(False)
+    def _sync_voxel_size_state(self) -> None:
+        """Enable/disable voxel size spinbox based on checkbox + availability."""
+        enabled = _VOXEL_AVAILABLE and self._chk_voxel.isChecked()
+        self._voxel_size_spin.setEnabled(enabled)
 
     # ── Signal callbacks ──────────────────────────────────────────────────────
 
@@ -195,6 +230,10 @@ class SimPanel(QWidget):
 
     def _on_feedrate_toggled(self, checked: bool) -> None:
         self._s.show_feedrate = checked
+
+    def _on_voxel_enabled_toggled(self, checked: bool) -> None:
+        self._s.voxel_enabled = checked
+        self._sync_voxel_size_state()
 
     def _on_voxel_size_changed(self, value: float) -> None:
         if self._sim_running:

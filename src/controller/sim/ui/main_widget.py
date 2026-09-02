@@ -89,8 +89,10 @@ class DatumSimWidget(QWidget):
         self.settings.sim_panel.tool_mode_changed.connect(self.set_tool_mode)
         self.settings.sim_panel.path_mode_changed.connect(self.set_path_mode)
 
-        # Voxel size change from settings → reset (grid can't be resized live)
-        AppSettings.instance().voxel_size_changed.connect(self._on_voxel_size_changed)
+        # Voxel setting changes from sim panel → setup/teardown
+        s = AppSettings.instance()
+        s.voxel_size_changed.connect(self._on_voxel_size_changed)
+        s.voxel_enabled_changed.connect(self._on_voxel_enabled_changed)
 
         # Render tick (~30 fps)
         self._render_timer = QTimer(self)
@@ -115,6 +117,7 @@ class DatumSimWidget(QWidget):
         self._player               = SimulationPlayer(program.path)
         self._tool_changes         = program.tool_changes
         self._last_tool_change_idx = -1
+        self._last_program         = program   # kept for voxel re-init on toggle/resize
 
         self.viewport.set_path(program.path)
 
@@ -130,8 +133,8 @@ class DatumSimWidget(QWidget):
         )
         self._apply_tool(first_tool)
 
-        # Initialise voxel simulation (no-op if C++ extension not installed)
-        if _VOXEL_AVAILABLE:
+        # Initialise voxel simulation (only when extension installed AND enabled)
+        if _VOXEL_AVAILABLE and s.voxel_enabled:
             self._setup_voxel_sim(program, first_tool, s.voxel_size)
 
         # Tell the sim panel whether a sim is now running (for voxel size guard)
@@ -181,14 +184,38 @@ class DatumSimWidget(QWidget):
             self._create_voxel_renderer()
         return super().eventFilter(obj, event)
 
-    def _on_voxel_size_changed(self, voxel_size: float) -> None:
-        """Voxel size changed in settings → reset the grid (no live resize)."""
+    def _teardown_voxel_sim(self) -> None:
+        """Stop the voxel worker and clear the mesh from the viewport."""
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.stop()
             self._voxel_ctrl = None
+        # Tell the viewport to show nothing (pass empty arrays)
+        if self._voxel_renderer is not None:
+            import numpy as np
+            self.viewport.upload_voxel_mesh(
+                np.empty((0, 3), dtype='f4'),
+                np.empty((0, 3), dtype='f4'),
+                np.empty((0,),   dtype='u4'),
+            )
+
+    def _on_voxel_size_changed(self, voxel_size: float) -> None:
+        """Voxel size changed in settings → reset the grid (no live resize)."""
+        self._teardown_voxel_sim()
         # Re-create with new voxel size if a program is loaded
         if self._player is not None and hasattr(self, '_last_program'):
             self._setup_voxel_sim(self._last_program, self._current_tool, voxel_size)
+
+    def _on_voxel_enabled_changed(self, enabled: bool) -> None:
+        """Sim-panel checkbox toggled → start or stop voxel simulation."""
+        if not _VOXEL_AVAILABLE:
+            return
+        if enabled:
+            # Start sim if a program is already loaded
+            if self._player is not None and hasattr(self, '_last_program'):
+                s = AppSettings.instance()
+                self._setup_voxel_sim(self._last_program, self._current_tool, s.voxel_size)
+        else:
+            self._teardown_voxel_sim()
 
     # ── Tool management (T-command driven) ───────────────────────────────────
 
