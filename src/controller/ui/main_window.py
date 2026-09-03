@@ -158,11 +158,6 @@ class MainWindow(QMainWindow):
 
         button_row.addStretch(1)
 
-        self.return_btn = CardButton(icon=get_icon("return"), icon_size=48)
-        self.return_btn.setFixedSize(100, 100)
-        self.return_btn.clicked.connect(self._on_return_clicked)
-        button_row.addWidget(self.return_btn)
-
         # Feed Hold — reachable from this app-wide quick bar (outside
         # self._stack, so it survives page navigation) regardless of which
         # page is showing, per "von überall gestoppt werden kann". Only
@@ -170,6 +165,9 @@ class MainWindow(QMainWindow):
         # _on_program_state_for_quickbar) — toggles the real
         # MachineController.set_feed_hold(), distinct from MachinePage's
         # own Pause button (pause_program(), a full resumable pause).
+        # Placed left of Return: this bar has no separate Stop button, so
+        # Feed Hold's QSS (dark.qss/light.qss) carries Stop's red as its own
+        # default/warning color instead of the amber some other toggles use.
         self.feed_hold_btn = CardButton(
             "Feed Hold", icon=get_icon("player-pause", tint=True, size=QSize(40, 40)),
             icon_size=40,
@@ -184,6 +182,11 @@ class MainWindow(QMainWindow):
             self._on_program_state_for_quickbar
         )
         button_row.addWidget(self.feed_hold_btn)
+
+        self.return_btn = CardButton(icon=get_icon("return"), icon_size=48)
+        self.return_btn.setFixedSize(100, 100)
+        self.return_btn.clicked.connect(self._on_return_clicked)
+        button_row.addWidget(self.return_btn)
 
         # -------------------------------------------------------
         # Layout
