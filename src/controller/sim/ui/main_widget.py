@@ -471,11 +471,22 @@ class DatumSimWidget(QWidget):
             self._apply_initial_tool()
             self.control_hub.reset_play_state()
         if self._voxel_ctrl is not None:
-            self._voxel_ctrl.reset()
-            # Upload the reset (fully solid) grid immediately
+            # VoxelSimController.reset() -> GpuVoxelGrid.reset() does its own
+            # immediate, full self._tex.write(...) (not the incremental
+            # upload_if_dirty() path) and then clears the dirty flag itself
+            # — so the GL context must already be current for THIS call, not
+            # after it. It used to be called before makeCurrent(), which
+            # made that write execute with no context bound (a no-op on
+            # most drivers rather than a crash); reset() then leaving
+            # `_dirty = False` meant the upload_if_dirty() call that
+            # followed had nothing left to do either, so the CPU-side grid
+            # went back to solid but the actually-rendered GPU texture
+            # never did — Reset looked like it hadn't cleared the stock.
             self.viewport.makeCurrent()
-            self._voxel_ctrl.grid.upload_if_dirty()
-            self.viewport.doneCurrent()
+            try:
+                self._voxel_ctrl.reset()
+            finally:
+                self.viewport.doneCurrent()
 
     def sim_seek(self, fraction: float) -> None:
         if self._player:
