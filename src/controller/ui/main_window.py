@@ -229,6 +229,13 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_TOOLS_PAGE_INDEX)
 
     def _on_return_clicked(self) -> None:
+        # ToolPage has its own internal list<->detail sub-navigation — if
+        # it's currently showing the detail view, Return closes that
+        # first instead of jumping straight past it to Home (a second
+        # Return press from the list then goes Home as usual).
+        if self._stack.currentWidget() is self._tools_page and self._tools_page.is_showing_detail():
+            self._tools_page.close_detail()
+            return
         self._stack.setCurrentIndex(_HOME_INDEX)
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:

@@ -6,15 +6,15 @@ Flutes / Type), and an "In Magazine" toggle filter.
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QWidget
-
-from controller.ui.widgets.card_button import CardButton
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 SORT_OPTIONS: list[tuple[str, str]] = [
-    ("Name",         "name"),
-    ("Diameter",     "diameter"),
-    ("Flutes",       "flute_count"),
-    ("Type",         "tool_type"),
+    ("Name",           "name"),
+    ("Diameter",       "diameter"),
+    ("Flutes",         "flute_count"),
+    ("Type",           "tool_type"),
+    ("Tool Number",    "tool_number"),
+    ("Pocket Number",  "pocket"),
 ]
 
 
@@ -43,10 +43,14 @@ class ToolFilterBar(QWidget):
         )
         root.addWidget(self._sort_combo)
 
-        self._magazine_only_btn = CardButton("In Magazine")
+        # Plain QPushButton, not the Card-based CardButton — Card's
+        # hardcoded 16px margins (card.py) don't fit a compact toggle at
+        # this row's height; see dark.qss/light.qss's
+        # QPushButton#ToolFilterToggle:checked rule for the highlight.
+        self._magazine_only_btn = QPushButton("In Magazine")
         self._magazine_only_btn.setCheckable(True)
-        self._magazine_only_btn.setProperty("variant", "sim_nav")
-        self._magazine_only_btn.setFixedHeight(36)
+        self._magazine_only_btn.setObjectName("ToolFilterToggle")
+        self._magazine_only_btn.setFixedHeight(32)
         self._magazine_only_btn.toggled.connect(self.magazine_only_toggled)
         root.addWidget(self._magazine_only_btn)
 

@@ -26,9 +26,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+)
 
 from controller.sim.simulation.tool_definition import ToolDefinition
+from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
 from controller.ui.widgets.tool_icons import tool_type_icon
 
 TOOL_MIME_TYPE = "application/x-datum-tool"
@@ -41,18 +44,22 @@ UNASSIGNED_POCKET = -1
 _SLOT_SIZE = QSize(84, 96)
 
 
-class _PocketSlot(QFrame):
+class _PocketSlot(DragHoldMixin, QFrame):
     """One pocket: number, tool-type icon (if occupied), name or "Frei".
     Drag source (dragging a tool back out of its pocket) AND drop target
-    (accepting a tool dragged in from the list or another pocket)."""
+    (accepting a tool dragged in from the list or another pocket). A
+    plain click (no drag — see DragHoldMixin/tool_drag.py) on an occupied
+    slot emits tool_clicked to open that tool's detail page."""
 
     # tool_number, target_pocket — this slot's own pocket_number
     tool_dropped = Signal(int, int)
+    tool_clicked = Signal(int)   # tool_number
 
     def __init__(self, pocket_number: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._pocket_number = pocket_number
         self._tool: ToolDefinition | None = None
+        self._dh_init()
 
         self.setObjectName("Card")
         self.setProperty("variant", "sim_nav")
@@ -96,17 +103,48 @@ class _PocketSlot(QFrame):
             self._name_lbl.setText(tool.name or tool.remark or f"T{tool.tool_number}")
             self.setToolTip(f"T{tool.tool_number} — {tool.name or tool.remark}")
 
-    # ── Drag source (drag the occupying tool back out) ─────────────────────
+    # ── Drag source (drag the occupying tool back out) / click-to-open ─────
+    # Gated by DragHoldMixin: a plain click (press+release with no drag
+    # ever starting) emits tool_clicked; the drag itself only starts from
+    # mouseMoveEvent once press-and-hold + a move past the threshold are
+    # both satisfied — see tool_drag.py.
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._tool is not None:
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setData(TOOL_MIME_TYPE, str(self._tool.tool_number).encode("utf-8"))
-            drag.setMimeData(mime)
-            drag.setPixmap(self.grab())
-            drag.exec(Qt.DropAction.MoveAction)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dh_press(event.position().toPoint())
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._tool is not None and self._dh_move(event.position().toPoint()):
+            self._dh_release()
+            self._start_drag()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        was_click = self._dh_press_pos is not None
+        self._dh_release()
+        if (
+            was_click and event.button() == Qt.MouseButton.LeftButton
+            and self._tool is not None
+        ):
+            self.tool_clicked.emit(self._tool.tool_number)
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self) -> None:
+        if self._tool is None:
+            return
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(TOOL_MIME_TYPE, str(self._tool.tool_number).encode("utf-8"))
+        drag.setMimeData(mime)
+        drag.setPixmap(scaled_drag_pixmap(self))
+        result = drag.exec(Qt.DropAction.MoveAction)
+        if result != Qt.DropAction.MoveAction:
+            # Not accepted by any other pocket (dropped on the list, the
+            # filter bar, outside the window, ...) — treat as "pulled the
+            # tool out and put it down somewhere else": empty this pocket.
+            self.tool_dropped.emit(self._tool.tool_number, UNASSIGNED_POCKET)
 
     # ── Drop target ──────────────────────────────────────────────────────────
 
@@ -130,13 +168,19 @@ class ToolMagazineBar(QScrollArea):
     # tool_number, target_pocket — re-emitted from whichever slot received
     # the drop; ToolPage connects this once instead of per-slot.
     tool_dropped = Signal(int, int)
+    tool_clicked = Signal(int)   # tool_number — re-emitted, see above
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setFixedHeight(_SLOT_SIZE.height() + 20)
+        # _SLOT_SIZE.height() + row margins (8+8) + headroom for the
+        # horizontal scrollbar that appears once pockets overflow the
+        # visible width (~15-16px) — the previous "+20" left almost no
+        # slack and visibly squished the slots once the scrollbar showed.
+        self.setFixedHeight(_SLOT_SIZE.height() + 8 + 8 + 16)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self._row = QHBoxLayout()
         self._row.setContentsMargins(8, 8, 8, 8)
@@ -167,6 +211,7 @@ class ToolMagazineBar(QScrollArea):
         for i in range(1, n + 1):
             slot = _PocketSlot(i)
             slot.tool_dropped.connect(self.tool_dropped)
+            slot.tool_clicked.connect(self.tool_clicked)
             self._row.insertWidget(self._row.count() - 1, slot)
             self._slots.append(slot)
 

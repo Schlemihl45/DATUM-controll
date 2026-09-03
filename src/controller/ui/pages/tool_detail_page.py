@@ -3,22 +3,27 @@ ui/pages/tool_detail_page.py — ToolDetailPage: full editor for one tool,
 shown by ToolPage's internal QStackedWidget when a list card's details
 button is clicked.
 
-Layout (top to bottom): header (save&back button + read-only ID/pocket/
+Layout (top to bottom): header ("Zurück" button + read-only ID/pocket/
 name line) — ToolProfileWidget (live 2D preview) — two QFormLayout blocks
 side by side (identity/lifecycle fields on the left + remark below it;
 geometric/technological parameters on the right).
 
-Persistence: nothing is written to ToolDatabase until the header button is
-clicked (labelled "Speichern & Zurück" — save IS the only way back, there
-is no separate discard). Every field edit before that only updates a
-transient in-memory ToolDefinition (see _push_live_profile()), so
-ToolProfileWidget's live preview never touches the DB per keystroke.
+Persistence: auto-save. Every field commits to ToolDatabase on its own
+natural "I'm done with this value" signal — valueChanged for spin boxes
+and combo boxes (discrete, already-final on every change), editingFinished
+/focus-out for free text (QLineEdit/QPlainTextEdit — NOT textChanged, so a
+row isn't rewritten on every keystroke). See _auto_save(). The header
+button is therefore just navigation now ("Zurück", no "Speichern" in the
+label) — it still calls _auto_save() once more before leaving, as a flush
+for a text field whose focus never left before the click. The live 2D
+preview (_push_live_profile()) is unrelated to this — it always reflects
+the current, not-yet-necessarily-saved form state, same as before.
 """
 from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget,
@@ -40,6 +45,18 @@ def _section_label(text: str) -> QLabel:
     return lbl
 
 
+class _AutoSaveTextEdit(QPlainTextEdit):
+    """QPlainTextEdit has no built-in editingFinished — this adds the
+    equivalent (fired on focus-out) so the remark field can auto-save
+    without writing on every keystroke."""
+
+    focus_out = Signal()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.focus_out.emit()
+
+
 class ToolDetailPage(QWidget):
     back_requested = Signal()
 
@@ -54,11 +71,20 @@ class ToolDetailPage(QWidget):
 
         # ── Header ───────────────────────────────────────────────────────────
         header = QHBoxLayout()
+        # Horizontal orientation (icon left, label right), same proven
+        # pattern + size settings_page.py's _NavStack nav buttons use
+        # (_NAV_BTN_SIZE=196x44, _NAV_ICON_SIZE=20x20) — the previous
+        # vertical CardButton (icon above label) needs ~74px to fit inside
+        # Card's hardcoded 16px margins, but was fixed to 48px, squishing
+        # it. No more "Speichern" in the label: saving is now continuous
+        # (see _auto_save()), this button just navigates back.
         self._back_btn = CardButton(
-            "Speichern & Zurück", icon=get_icon("return", tint=True), icon_size=24,
+            "Zurück", icon=get_icon("return", tint=True, size=QSize(20, 20)),
+            icon_size=20, orientation=Qt.Orientation.Horizontal,
         )
-        self._back_btn.setFixedHeight(48)
-        self._back_btn.clicked.connect(self._save_and_close)
+        self._back_btn.setProperty("variant", "sim_nav")
+        self._back_btn.setFixedSize(QSize(140, 44))
+        self._back_btn.clicked.connect(self._close)
         header.addWidget(self._back_btn)
 
         self._id_lbl = QLabel()
@@ -117,7 +143,7 @@ class ToolDetailPage(QWidget):
         left_col.addLayout(left_form)
 
         left_col.addWidget(_section_label("Bemerkung"))
-        self._remark_edit = QPlainTextEdit()
+        self._remark_edit = _AutoSaveTextEdit()
         self._remark_edit.setFixedHeight(70)
         left_col.addWidget(self._remark_edit)
         left_col.addStretch()
@@ -178,6 +204,27 @@ class ToolDetailPage(QWidget):
         self._holder_combo.currentIndexChanged.connect(self._push_live_profile)
         self._name_edit.textChanged.connect(self._update_id_label)
         self._pocket_spin.valueChanged.connect(self._update_id_label)
+
+        # ── Auto-save wiring ─────────────────────────────────────────────────
+        # Discrete widgets (spin boxes, combo boxes) are already "final" on
+        # every change — valueChanged/currentIndexChanged. Free-text fields
+        # use editingFinished/focus-out instead of textChanged so a row
+        # isn't rewritten on every keystroke. See _auto_save().
+        for spin in (
+            self._diameter_spin, self._flute_length_spin, self._cutting_length_spin,
+            self._shank_dia_spin, self._total_len_spin, self._corner_r_spin,
+            self._clearance_spin, self._tip_angle_spin, self._taper_angle_spin,
+            self._pocket_spin, self._z_off_spin, self._service_life_spin,
+            self._used_min_spin, self._flute_count_spin, self._cutting_speed_spin,
+            self._feed_rate_spin,
+        ):
+            spin.valueChanged.connect(self._auto_save)
+        self._type_combo.currentIndexChanged.connect(self._auto_save)
+        self._holder_combo.currentIndexChanged.connect(self._auto_save)
+        self._name_edit.editingFinished.connect(self._auto_save)
+        self._manufacturer_edit.editingFinished.connect(self._auto_save)
+        self._material_edit.editingFinished.connect(self._auto_save)
+        self._remark_edit.focus_out.connect(self._auto_save)
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -267,10 +314,21 @@ class ToolDetailPage(QWidget):
         holder = STANDARD_HOLDERS.get(holder_name) if holder_name else None
         self._profile.set_tool(preview, holder)
 
-    def _save_and_close(self) -> None:
-        if self._tool is not None:
-            tool = self._collect_form_into(self._tool)
-            ToolDatabase.instance().upsert_tool(tool)
+    def _auto_save(self, *_args) -> None:
+        """Persist the current form state immediately — see class
+        docstring's Persistence section. Connected to every field's
+        natural "done editing this value" signal."""
+        if self._loading or self._tool is None:
+            return
+        self._tool = self._collect_form_into(self._tool)
+        ToolDatabase.instance().upsert_tool(self._tool)
+
+    def _close(self) -> None:
+        # Flush once more before leaving: covers a text field the user
+        # edited but never tabbed/clicked out of (editingFinished/
+        # focus-out wouldn't have fired yet) — spin/combo fields are
+        # already saved as of their last valueChanged.
+        self._auto_save()
         self.back_requested.emit()
 
 
