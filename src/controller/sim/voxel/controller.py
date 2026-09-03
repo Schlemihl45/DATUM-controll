@@ -25,12 +25,21 @@ the tool red only while it's actually in the collision" in the UI.
 one-shot handling (logging) regardless of how long a given collision's
 visual state stays active.
 
-A "grace period" (``_start_clearance_confirmed``) suppresses collision
-reporting from program start until the tool has been confirmed clear of
-material at least once — a safety net for the initial, synthetic tool
-position a compiled path starts from (see
-GCodeCompiler.load_file()/AppSettings.start_safe_z_mm) not being fully
-reliable in every edge case.
+Pre-pass lookup, not a live geometry check (SIM mode)
+-------------------------------------------------------
+``on_tick()`` (SIM-mode playback) no longer calls collision.check_segment()
+itself — that per-frame, per-segment numpy work was the actual cost behind
+the old live check. Instead it looks up each segment's collision status
+from a ``prepass.CollisionPrepassResult`` computed ONCE, in a background
+thread, for the whole program (see ``set_prepass()`` and
+``DatumSimWidget._start_prepass()``). Until a result has been injected via
+``set_prepass()``, every segment reads as clear — there is deliberately no
+"check live until the pre-pass catches up" fallback, since a fallback would
+reintroduce the exact per-tick cost this rewrite removes.
+
+``carve_move()`` (MACHINE mode) is unaffected: it still calls
+collision.check_segment() directly, live — MACHINE mode has no tessellated
+path to pre-scan (see its own docstring).
 
 Thread safety
 -------------
@@ -52,6 +61,8 @@ GIL-atomic rebind, the same lock-free idiom ``gpu_grid.py``'s
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from controller.sim.voxel.gpu_grid   import GpuVoxelGrid
@@ -60,6 +71,9 @@ from controller.sim.voxel.collision  import check_segment, CollisionHit
 from controller.sim.voxel.stock      import StockDefinition, BoundingBox
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.sim.simulation.tool_holder import HolderProfile
+
+if TYPE_CHECKING:
+    from controller.sim.voxel.prepass import CollisionPrepassResult
 
 
 class VoxelSimController:
@@ -101,7 +115,7 @@ class VoxelSimController:
         self._collision_enabled = True
         self._hit: CollisionHit | None = None       # live state — see class docstring
         self._new_hits: list[CollisionHit] = []      # queue — see drain_new_hits()
-        self._start_clearance_confirmed = False      # see class docstring ("grace period")
+        self._prepass = None   # prepass.CollisionPrepassResult | None — see set_prepass()
 
         # High-Water-Mark: last carved arc-length and corresponding path index
         self._max_s:   float = 0.0
@@ -130,6 +144,15 @@ class VoxelSimController:
     def set_collision_enabled(self, v: bool) -> None:
         self._collision_enabled = v
 
+    def set_prepass(self, result: "CollisionPrepassResult | None") -> None:
+        """Inject the currently-valid pre-pass collision table (or None to
+        clear it, e.g. while a recompute is in flight). on_tick() reads
+        segment hits from this instead of calling check_segment() itself —
+        see class docstring. Does not touch collision_hit/drain_new_hits()
+        state; call clear_collision() separately if a stale live tint needs
+        silencing (DatumSimWidget does both together on invalidation)."""
+        self._prepass = result
+
     def drain_new_hits(self) -> list[CollisionHit]:
         """Pop and return every CollisionHit discovered since the last call
         (each exactly once) — for one-shot handling (logging) independent
@@ -139,39 +162,23 @@ class VoxelSimController:
         return hits
 
     def clear_collision(self) -> None:
-        """Reset all collision state — live hit, pending queue, and the
-        start-of-program grace period. Called by reset() as part of
-        rebuilding the stock from scratch; safe to call standalone too
-        (e.g. to silence a stale live tint without a full rebuild)."""
+        """Reset all live collision state — the current hit and the pending
+        queue. Does NOT touch the injected prepass table (set_prepass() is
+        the only way to change that) — a Reset re-solidifies the stock but
+        the pre-scanned collision geometry against a fresh stock is still
+        exactly as valid as before. Called by reset(); safe to call
+        standalone too (e.g. to silence a stale live tint)."""
         self._hit = None
         self._new_hits = []
-        self._start_clearance_confirmed = False
 
-    # ── Collision check (shared by on_tick() and carve_move()) ────────────────
+    # ── Collision check (MACHINE-mode carve_move() only — see class
+    # docstring: SIM-mode on_tick() reads the prepass table instead) ──────────
 
     def _check_collision(
         self, start: np.ndarray, end: np.ndarray, tool: ToolDefinition, is_rapid: bool,
     ) -> CollisionHit | None:
         if not self._collision_enabled:
             return None
-
-        if not self._start_clearance_confirmed:
-            # Grace period: don't report anything yet — instead, probe
-            # whether *end* is now clear. Re-uses check_segment() itself as
-            # the probe: a zero-length "segment" (start==end) with
-            # is_rapid=True forced tests the FULL tool+holder envelope at
-            # that single point regardless of the move's real type — which
-            # is exactly "is the tool currently sitting in open air".
-            # Confirmed clear here unlocks normal checking from the NEXT
-            # segment/move onward; this one stays suppressed either way.
-            clear = check_segment(
-                self._grid.material, self._grid.bbox, self._grid.voxel_size,
-                end, end, tool, True, self._holder,
-            ) is None
-            if clear:
-                self._start_clearance_confirmed = True
-            return None
-
         return check_segment(
             self._grid.material, self._grid.bbox, self._grid.voxel_size,
             start, end, tool, is_rapid, self._holder,
@@ -210,10 +217,13 @@ class VoxelSimController:
             # from i → i+1 is rapid when feeds[i+1] == 0.0.
             is_rapid = self._feeds[i + 1] == 0.0
 
-            hit = self._check_collision(self._pts[i], self._pts[i + 1], self._tool, is_rapid)
+            # O(1) table lookup, not a live geometry check — see class
+            # docstring. line_number is already stamped correctly by
+            # prepass.run_prepass(); nothing to re-derive here.
+            hit = None
+            if self._collision_enabled and self._prepass is not None:
+                hit = self._prepass.hits_by_segment.get(i)
             if hit is not None:
-                if self._line_ids is not None:
-                    hit.line_number = int(self._line_ids[i + 1])
                 self._new_hits.append(hit)
             last_hit = hit
 
@@ -298,10 +308,10 @@ class VoxelSimController:
         Rebuild the stock from scratch.
 
         Resets the material grid to fully solid, clears the High-Water-Mark
-        and all collision state (including the start-of-program grace
-        period — a freshly solid stock means the very first move needs to
-        clear it again), and marks the grid dirty so the next upload pushes
-        the full reset.
+        and the live collision state, and marks the grid dirty so the next
+        upload pushes the full reset. The injected prepass table (see
+        set_prepass()) is left untouched — it's still valid against the
+        freshly-solid stock.
         """
         self._grid.reset()
         self.clear_collision()

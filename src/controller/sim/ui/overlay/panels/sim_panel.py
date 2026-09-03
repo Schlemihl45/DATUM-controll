@@ -378,6 +378,19 @@ class _VoxelSimTab(QWidget):
             "Schaft/Aufnahme darüber gelten als Kollision."
         )
         safety_form.addRow("Kollisionserkennung", self._chk_collision)
+
+        self._safe_z_spin = QDoubleSpinBox()
+        self._safe_z_spin.setRange(0.0, 500.0)
+        self._safe_z_spin.setSingleStep(5.0)
+        self._safe_z_spin.setDecimals(1)
+        self._safe_z_spin.setSuffix(" mm")
+        self._safe_z_spin.setToolTip(
+            "Angenommene Werkzeug-Z-Position (über dem Werkstück-Nullpunkt) "
+            "vor dem ersten Programmschritt — verhindert eine fälschliche "
+            "G00-Kollisionsmeldung beim Programmstart.\n"
+            "Wirkt erst beim nächsten Laden der Datei, nicht live."
+        )
+        safety_form.addRow("Start-Sicherheitsabstand Z", self._safe_z_spin)
         root.addLayout(safety_form)
 
         root.addStretch()
@@ -391,18 +404,21 @@ class _VoxelSimTab(QWidget):
         self._chk_collision.blockSignals(True)
         self._chk_collision.setChecked(s.collision_detection_enabled)
         self._chk_collision.blockSignals(False)
+        _sync_spin(self._safe_z_spin, s.start_safe_z_mm)
 
         # Write side
         self._chk.toggled.connect(self._on_enabled)
         self._size_spin.valueChanged.connect(lambda v: setattr(s, "voxel_size", v))
         self._chk_collision.toggled.connect(
             lambda v: setattr(s, "collision_detection_enabled", v))
+        self._safe_z_spin.valueChanged.connect(lambda v: setattr(s, "start_safe_z_mm", v))
 
         # Read side
         s.voxel_enabled_changed.connect(self._on_enabled_changed)
         s.voxel_size_changed.connect(lambda v: _sync_spin(self._size_spin, v))
         s.collision_detection_enabled_changed.connect(
             lambda v: _sync_checkbox(self._chk_collision, v))
+        s.start_safe_z_mm_changed.connect(lambda v: _sync_spin(self._safe_z_spin, v))
 
     def _sync_size_state(self) -> None:
         self._size_spin.setEnabled(_VOXEL_AVAILABLE and self._chk.isChecked())

@@ -50,11 +50,12 @@ from controller.sim.core.settings             import AppSettings
 # Voxel sim — pure Python/numpy + GLSL raymarching (no C++ required)
 try:
     from controller.sim.voxel.stock      import StockDefinition, StockShape
-    from controller.sim.voxel.gpu_grid   import GpuVoxelGrid, solid_material
+    from controller.sim.voxel.gpu_grid   import GpuVoxelGrid
     from controller.sim.voxel.carver     import VoxelCarver
     from controller.sim.voxel.controller import VoxelSimController
     from controller.sim.voxel.renderer   import VoxelRenderer
-    from controller.sim.voxel.collision  import check_segment, CollisionHit
+    from controller.sim.voxel.collision  import CollisionHit
+    from controller.sim.voxel.prepass    import CollisionPrepassResult, run_prepass
     _VOXEL_AVAILABLE = True
 except ImportError:
     _VOXEL_AVAILABLE = False
@@ -98,11 +99,11 @@ class DatumSimWidget(QWidget):
     # hit on subsequent ticks. See _handle_collision_state().
     collision_detected = Signal(object)
 
-    # Internal plumbing for presim_check_collisions()'s background->main
-    # thread handoff — see that method's docstring for why this (a Qt
-    # signal) is used instead of QTimer.singleShot() from the worker
-    # thread.
-    _presim_collision_done = Signal(object)
+    # Internal plumbing for the collision pre-pass's background->main
+    # thread handoff (generation, CollisionPrepassResult|None) — see
+    # _start_prepass()'s docstring for why this (a Qt signal) is used
+    # instead of QTimer.singleShot() from the worker thread.
+    _prepass_done = Signal(int, object)
 
     _TOOL_MAP = {
         "Endmill":    ToolMode.CYLINDER,
@@ -166,6 +167,17 @@ class DatumSimWidget(QWidget):
         self._last_machine_pos:       np.ndarray | None                    = None
         self._pending_machine_carve:  tuple[np.ndarray, np.ndarray] | None = None
 
+        # Collision pre-pass — see _start_prepass()'s docstring. _prepass_result
+        # is the last COMPLETED table (or None, before the first one lands);
+        # _prepass_generation guards against a stale background worker's
+        # result overwriting a newer trigger's (reload / parameter change
+        # arriving while an older pre-pass is still running).
+        self._prepass_result:     "CollisionPrepassResult | None"      = None
+        self._prepass_generation: int                                  = 0
+        self._prepass_abort:      threading.Event                      = threading.Event()
+        self._pending_prepass_cb: Callable[["CollisionPrepassResult | None"], None] | None = None
+        self._prepass_done.connect(self._on_prepass_done)
+
         # ── Signal connections ────────────────────────────────────────────────
         # Tool/path display mode are read straight from AppSettings rather
         # than forwarded through a specific settings-widget instance: the
@@ -191,6 +203,11 @@ class DatumSimWidget(QWidget):
         s.stock_x_offset_changed.connect(self._on_stock_settings_changed)
         s.stock_y_offset_changed.connect(self._on_stock_settings_changed)
         s.collision_detection_enabled_changed.connect(self._on_collision_enabled_changed)
+        # NOTE: start_safe_z_mm deliberately does NOT invalidate the
+        # pre-pass — per its own docstring it only takes effect on the
+        # next (re)load, since the value is baked into the already-
+        # tessellated path at load time; recomputing against the same,
+        # unchanged path would just waste a background pass.
 
         # ── Render tick (~30 fps) ─────────────────────────────────────────────
         self._render_timer = QTimer(self)
@@ -208,6 +225,13 @@ class DatumSimWidget(QWidget):
     def set_file(self, path: str) -> None:
         """Compile and load a G-code file, set up the simulation player."""
         self._teardown_voxel_sim()
+        # A new program invalidates any in-flight/completed pre-pass for
+        # the OLD one outright — bump the generation and drop the stale
+        # result now so nothing between here and the fresh _start_prepass()
+        # call below could read it as still valid.
+        self._prepass_generation += 1
+        self._prepass_abort.set()
+        self._prepass_result = None
 
         s = AppSettings.instance()
         # The program's first move is implicitly a rapid FROM this position
@@ -240,6 +264,124 @@ class DatumSimWidget(QWidget):
 
         if _VOXEL_AVAILABLE and s.voxel_enabled:
             self._schedule_voxel_sim()
+
+        # Trigger a) — background, whole-program collision pre-pass. Runs
+        # independently of voxel-sim/GL readiness (it works against a
+        # disposable numpy scratch stock, see prepass.run_prepass()); the
+        # result is applied to _voxel_ctrl (now or once it's created) via
+        # _on_prepass_done()/_create_voxel_sim().
+        self._start_prepass()
+
+    # ── Collision pre-pass lifecycle ──────────────────────────────────────────
+
+    def _start_prepass(
+        self,
+        on_done: "Callable[[CollisionPrepassResult | None], None] | None" = None,
+    ) -> None:
+        """(Re)start the background, whole-program collision pre-pass.
+
+        Always aborts whatever pre-pass is currently in flight and starts a
+        fresh one — see class-level note on the three triggers (load,
+        Start-click, parameter change) in the plan this implements. Cheap
+        to over-call: an abort of an already-finished worker is a no-op,
+        and a worker that's only just starting notices the abort at its
+        next _ABORT_CHECK_STRIDE checkpoint (prepass.py) and exits quickly.
+
+        Race safety: each call captures its own generation number
+        (self._prepass_generation, incremented here) and binds a FRESH
+        threading.Event to the new worker — never the previous one — so an
+        older worker's belated completion can never be mistaken for this
+        call's abort signal. _on_prepass_done() (the delivery slot) drops
+        any result whose generation no longer matches
+        self._prepass_generation, which is what actually makes a stale
+        worker's result harmless even in the (normally impossible, since
+        each worker gets its own Event) case both are somehow still
+        running.
+
+        Skips the scan entirely (calls on_done(None) synchronously) if
+        there's no program loaded or collision detection is effectively
+        disabled — same short-circuit presim_check_collisions() always had.
+        """
+        self._prepass_generation += 1
+        gen = self._prepass_generation
+        self._prepass_abort.set()
+
+        if (
+            not _VOXEL_AVAILABLE
+            or self._last_program is None
+            or len(self._last_program.path.points) < 2
+            or not self._effective_collision_enabled()
+        ):
+            self._prepass_result = None
+            if self._voxel_ctrl is not None:
+                self._voxel_ctrl.set_prepass(None)
+            if on_done:
+                on_done(None)
+            return
+
+        s = AppSettings.instance()
+        program = self._last_program
+        path = program.path
+        try:
+            shape = StockShape(s.stock_shape)
+        except ValueError:
+            shape = StockShape.BOUNDING_BOX
+        stock = StockDefinition(
+            shape=shape, voxel_size=s.voxel_size, z_offset_mm=s.stock_z_offset_mm,
+            height_mm=s.stock_height_mm, round_radius_mm=s.stock_round_radius_mm,
+            width_mm=s.stock_width_mm, depth_mm=s.stock_depth_mm,
+            x_offset_mm=s.stock_x_offset_mm, y_offset_mm=s.stock_y_offset_mm,
+        )
+        stock.build_bbox(path)
+
+        tool_changes = program.tool_changes
+        initial_tool = (
+            get_tool(tool_changes[0].tool_number) if tool_changes else get_tool(1)
+        )
+        db = ToolDatabase.instance()
+
+        my_abort = threading.Event()
+        self._prepass_abort = my_abort
+        self._pending_prepass_cb = on_done
+
+        def _worker() -> None:
+            result = run_prepass(
+                path, tool_changes, initial_tool, stock,
+                get_tool=get_tool, get_holder=db.get_holder, abort=my_abort,
+            )
+            if not my_abort.is_set():
+                self._prepass_done.emit(gen, result)
+
+        threading.Thread(
+            target=_worker, daemon=True, name="collision-prepass",
+        ).start()
+
+    def _on_prepass_done(self, gen: int, result: "CollisionPrepassResult | None") -> None:
+        """Slot for _prepass_done — runs on the GUI thread (Qt queues the
+        cross-thread emit). Drops the result outright if a newer trigger
+        has already superseded it (see _start_prepass()'s docstring)."""
+        if gen != self._prepass_generation:
+            return
+        self._prepass_result = result
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.set_prepass(result)
+        cb, self._pending_prepass_cb = self._pending_prepass_cb, None
+        if cb is not None:
+            cb(result)
+
+    def _invalidate_prepass(self, *_args) -> None:
+        """A parameter that affects collision geometry changed (voxel size,
+        stock shape/dimensions, collision-detection re-enabled) — drop the
+        now-stale table immediately (so on_tick() reads no hits rather than
+        wrong ones in the meantime) and kick off a fresh background
+        recompute."""
+        self._prepass_result = None
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.set_prepass(None)
+        self._collision_active = False
+        self.viewport.set_collision(False)
+        self.control_hub.clear_collision()
+        self._start_prepass()
 
     # ── Voxel sim lifecycle ───────────────────────────────────────────────────
 
@@ -302,6 +444,12 @@ class DatumSimWidget(QWidget):
                 self._voxel_ctrl.update_holder(
                     ToolDatabase.instance().get_holder(active_tool.holder_preset)
                 )
+            # Apply whatever pre-pass table is currently valid (may still
+            # be None — a fresh one is already in flight from set_file(),
+            # see _start_prepass(); this just avoids a gap where a
+            # rebuild-triggering settings change loses an otherwise still-
+            # valid, already-completed result).
+            self._voxel_ctrl.set_prepass(self._prepass_result)
             self._collision_active = False
 
             self._voxel_renderer = VoxelRenderer(self.viewport.ctx, grid)
@@ -356,6 +504,9 @@ class DatumSimWidget(QWidget):
         self._teardown_voxel_sim()
         if self._last_program is not None and AppSettings.instance().voxel_enabled:
             self._schedule_voxel_sim()
+        # The pre-pass sampled against the old voxel resolution — recompute
+        # against the new one (see _invalidate_prepass()).
+        self._invalidate_prepass()
 
     def _on_voxel_enabled_changed(self, enabled: bool) -> None:
         """Voxel enable/disable checkbox toggled."""
@@ -373,6 +524,12 @@ class DatumSimWidget(QWidget):
         # precedence over a global-setting change.
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.set_collision_enabled(self._effective_collision_enabled())
+        # Toggling detection on/off doesn't change what the pre-pass would
+        # find (on_tick() itself gates the lookup on _collision_enabled),
+        # EXCEPT that _start_prepass() skips the scan entirely while
+        # detection is off (see its docstring) — so turning it back on
+        # needs a real (re)compute, not just a flag flip.
+        self._invalidate_prepass()
 
     def _effective_collision_enabled(self) -> bool:
         """AppSettings.collision_detection_enabled, unless the current
@@ -391,6 +548,9 @@ class DatumSimWidget(QWidget):
         self._teardown_voxel_sim()
         if self._last_program is not None and AppSettings.instance().voxel_enabled:
             self._schedule_voxel_sim()
+        # New stock shape/dimensions → the pre-pass's collision geometry is
+        # stale (it scanned against the OLD stock) — recompute.
+        self._invalidate_prepass()
 
     # ── Tool management ───────────────────────────────────────────────────────
 
@@ -645,125 +805,29 @@ class DatumSimWidget(QWidget):
         self,
         on_done: Callable[["CollisionHit | None"], None],
     ) -> None:
-        """Background, whole-program collision pre-flight check ("Vorab-
-        Check") — run before a real MACHINE-mode Start, not tied to
-        playback speed or the live voxel state.
+        """Collision pre-flight check ("Vorab-Check") for the Start button —
+        name/signature intentionally unchanged (MachinePage._on_start_clicked
+        calls this exactly as before) even though the underlying mechanism
+        is now the shared collision pre-pass (see _start_prepass()) rather
+        than a dedicated one-shot scan: it answers with the first hit (by
+        line number) from a COMPLETE table that then also serves the
+        subsequent SIM playback, instead of throwing away a scan that
+        stopped at the first hit.
 
-        Replays the ENTIRE loaded program from a fresh, fully-solid
-        scratch copy of the stock (never the live grid — running this must
-        not touch what's currently on screen), applying T-command tool
-        changes and checking every segment with collision.check_segment()
-        exactly like VoxelSimController.on_tick() does live. Stops at the
-        first hit. Cutting moves are also carved into the scratch array
-        (via a disposable, GPU-free VoxelCarver target) so later segments
-        see material already removed by earlier ones, same as real
-        playback would.
-
-        on_done(hit_or_None) is invoked on the main/GUI thread once the
-        background thread finishes, via a Qt signal (_presim_collision_done)
-        rather than QTimer.singleShot() called from the worker thread —
-        singleShot's timer would belong to the worker thread's (nonexistent)
-        event loop and never fire; a signal's queued cross-thread delivery
-        to a slot living on the GUI thread works regardless. Calls on_done
-        with None immediately, synchronously, no thread spun up, if there's
-        no program loaded or collision detection is disabled.
+        Answers immediately, synchronously, from the already-completed
+        table if one is valid (the common case — trigger a) already ran
+        this at load time); only actually (re)computes if none is
+        available yet, e.g. a parameter changed since the last completed
+        pre-pass and the recompute hasn't landed yet. Calls on_done(None)
+        outright (no scan) if there's no program loaded or collision
+        detection is effectively disabled — same short-circuit as before.
         """
-        s = AppSettings.instance()
-        if (
-            not _VOXEL_AVAILABLE
-            or self._last_program is None
-            or not self._effective_collision_enabled()
-        ):
-            on_done(None)
+        if self._prepass_result is not None:
+            on_done(self._prepass_result.first_hit)
             return
-
-        program = self._last_program
-        path    = program.path
-        if len(path.points) < 2:
-            on_done(None)
-            return
-
-        try:
-            shape = StockShape(s.stock_shape)
-        except ValueError:
-            shape = StockShape.BOUNDING_BOX
-        stock = StockDefinition(
-            shape=shape, voxel_size=s.voxel_size, z_offset_mm=s.stock_z_offset_mm,
-            height_mm=s.stock_height_mm, round_radius_mm=s.stock_round_radius_mm,
-            width_mm=s.stock_width_mm, depth_mm=s.stock_depth_mm,
-            x_offset_mm=s.stock_x_offset_mm, y_offset_mm=s.stock_y_offset_mm,
+        self._start_prepass(
+            on_done=lambda result: on_done(result.first_hit if result is not None else None)
         )
-        stock.build_bbox(path)
-        material = solid_material(stock)
-        bbox, voxel_size = stock.bbox, s.voxel_size
-
-        pts, feeds, line_ids = path.points, path.feed_rates, path.line_ids
-        tool_changes = program.tool_changes
-        initial_tool = (
-            get_tool(tool_changes[0].tool_number) if tool_changes else get_tool(1)
-        )
-        db = ToolDatabase.instance()
-
-        class _CpuMaterialSink:
-            """Minimal duck-typed carve target — implements just what
-            VoxelCarver.carve_segment() actually calls on its grid
-            (.voxel_size/.bbox/.shape/.carve()), writing straight into the
-            scratch numpy array. No GPU, no GpuVoxelGrid instance, so this
-            check never needs a GL context or touches the live grid."""
-
-            def __init__(self, mat: np.ndarray) -> None:
-                self._mat = mat
-                nz, ny, nx = mat.shape
-                self.shape = (nx, ny, nz)
-                self.bbox = bbox
-                self.voxel_size = voxel_size
-
-            def carve(self, ix0, ix1, iy0, iy1, iz0, iz1, mask) -> None:
-                self._mat[iz0:iz1, iy0:iy1, ix0:ix1][mask] = 0
-
-        def _worker() -> None:
-            carver = VoxelCarver(_CpuMaterialSink(material))
-            current_tool = initial_tool
-            current_holder = (
-                db.get_holder(current_tool.holder_preset) if current_tool else None
-            )
-            tc_idx = 0
-            hit: "CollisionHit | None" = None
-
-            for i in range(len(pts) - 1):
-                while (
-                    tc_idx < len(tool_changes)
-                    and tool_changes[tc_idx].line_index <= line_ids[i]
-                ):
-                    current_tool = get_tool(tool_changes[tc_idx].tool_number) or current_tool
-                    current_holder = (
-                        db.get_holder(current_tool.holder_preset) if current_tool else None
-                    )
-                    tc_idx += 1
-                if current_tool is None:
-                    continue
-
-                is_rapid = feeds[i + 1] == 0.0
-                hit = check_segment(
-                    material, bbox, voxel_size, pts[i], pts[i + 1],
-                    current_tool, is_rapid, current_holder,
-                )
-                if hit is not None:
-                    hit.line_number = int(line_ids[i + 1])
-                    break
-                if not is_rapid:
-                    carver.carve_segment(pts[i], pts[i + 1], current_tool)
-
-            self._presim_collision_done.emit(hit)
-
-        def _deliver(hit) -> None:
-            self._presim_collision_done.disconnect(_deliver)
-            on_done(hit)
-
-        self._presim_collision_done.connect(_deliver)
-        threading.Thread(
-            target=_worker, daemon=True, name="presim-collision-check",
-        ).start()
 
     # ── ControlHub wiring ─────────────────────────────────────────────────────
 
