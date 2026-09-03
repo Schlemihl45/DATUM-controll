@@ -41,7 +41,7 @@ TOOL_MIME_TYPE = "application/x-datum-tool"
 # convention rather than each hard-coding -1 independently.
 UNASSIGNED_POCKET = -1
 
-_SLOT_SIZE = QSize(84, 96)
+_SLOT_SIZE = QSize(96, 128)
 
 
 class _PocketSlot(DragHoldMixin, QFrame):
@@ -77,12 +77,14 @@ class _PocketSlot(DragHoldMixin, QFrame):
         self._pocket_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self._pocket_lbl)
 
+        root.addStretch()
+
         self._icon_lbl = QLabel()
-        self._icon_lbl.setFixedSize(28, 28)
+        self._icon_lbl.setFixedSize(64, 64)
         self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self._icon_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self._name_lbl = QLabel("Frei")
+        self._name_lbl = QLabel("Free")
         self._name_lbl.setObjectName("CardButtonLabel")
         self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._name_lbl.setWordWrap(True)
@@ -96,7 +98,7 @@ class _PocketSlot(DragHoldMixin, QFrame):
         self._tool = tool
         if tool is None:
             self._icon_lbl.clear()
-            self._name_lbl.setText("Frei")
+            self._name_lbl.setText("Free")
             self.setToolTip("")
         else:
             self._icon_lbl.setPixmap(tool_type_icon(tool.tool_type, size=28).pixmap(28, 28))
@@ -185,7 +187,7 @@ class ToolMagazineBar(QScrollArea):
         self._row = QHBoxLayout()
         self._row.setContentsMargins(8, 8, 8, 8)
         self._row.setSpacing(6)
-        self._row.addStretch()
+        #self._row.addStretch()
 
         container = QWidget()
         container.setLayout(self._row)

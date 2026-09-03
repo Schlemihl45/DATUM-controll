@@ -9,12 +9,12 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 SORT_OPTIONS: list[tuple[str, str]] = [
+    ("Pocket Number",  "pocket"),
     ("Name",           "name"),
     ("Diameter",       "diameter"),
     ("Flutes",         "flute_count"),
     ("Type",           "tool_type"),
     ("Tool Number",    "tool_number"),
-    ("Pocket Number",  "pocket"),
 ]
 
 
@@ -31,7 +31,7 @@ class ToolFilterBar(QWidget):
         root.setSpacing(8)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Suche (Name, Bemerkung) …")
+        self._search.setPlaceholderText("Search (Name, Comment) …")
         self._search.textChanged.connect(self.search_changed)
         root.addWidget(self._search, stretch=1)
 

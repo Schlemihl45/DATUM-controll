@@ -36,7 +36,7 @@ from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.tool_profile_widget import ToolProfileWidget
 
-_NO_HOLDER = "— Keine —"
+_NO_HOLDER = "No Holder"
 
 
 def _section_label(text: str) -> QLabel:
@@ -79,7 +79,7 @@ class ToolDetailPage(QWidget):
         # it. No more "Speichern" in the label: saving is now continuous
         # (see _auto_save()), this button just navigates back.
         self._back_btn = CardButton(
-            "Zurück", icon=get_icon("return", tint=True, size=QSize(20, 20)),
+            "Return", icon=get_icon("return", tint=True, size=QSize(20, 20)),
             icon_size=20, orientation=Qt.Orientation.Horizontal,
         )
         self._back_btn.setProperty("variant", "sim_nav")
@@ -102,7 +102,7 @@ class ToolDetailPage(QWidget):
         forms_row.setSpacing(24)
 
         left_col = QVBoxLayout()
-        left_col.addWidget(_section_label("Allgemein"))
+        left_col.addWidget(_section_label("General"))
         left_form = QFormLayout(); left_form.setSpacing(8)
 
         self._name_edit = QLineEdit()
@@ -110,7 +110,7 @@ class ToolDetailPage(QWidget):
 
         self._pocket_spin = QSpinBox()
         self._pocket_spin.setRange(-1, 200)
-        self._pocket_spin.setSpecialValueText("- (nicht zugewiesen)")
+        self._pocket_spin.setSpecialValueText("(not defined)")
         left_form.addRow("Pocket-Nummer", self._pocket_spin)
 
         self._z_off_spin = QDoubleSpinBox()
@@ -142,20 +142,18 @@ class ToolDetailPage(QWidget):
 
         left_col.addLayout(left_form)
 
-        left_col.addWidget(_section_label("Bemerkung"))
+        left_col.addWidget(_section_label("Notes"))
         self._remark_edit = _AutoSaveTextEdit()
         self._remark_edit.setFixedHeight(70)
         left_col.addWidget(self._remark_edit)
         left_col.addStretch()
 
         right_col = QVBoxLayout()
-        right_col.addWidget(_section_label("Geometrie & Technologie"))
+        right_col.addWidget(_section_label("Geometry"))
         right_form = QFormLayout(); right_form.setSpacing(8)
 
         self._diameter_spin = _mm_spin(0.01, 200.0)
         right_form.addRow("Diameter", self._diameter_spin)
-        self._flute_length_spin = _mm_spin(0.0, 500.0)
-        right_form.addRow("Flute Length", self._flute_length_spin)
         self._cutting_length_spin = _mm_spin(0.0, 500.0)
         right_form.addRow("Cutting Length", self._cutting_length_spin)
         self._shank_dia_spin = _mm_spin(0.0, 200.0)
@@ -166,23 +164,15 @@ class ToolDetailPage(QWidget):
         self._flute_count_spin.setRange(0, 20)
         right_form.addRow("Flutes", self._flute_count_spin)
         self._corner_r_spin = _mm_spin(0.0, 100.0)
-        right_form.addRow("Eckenradius", self._corner_r_spin)
+        right_form.addRow("Corner Radius", self._corner_r_spin)
         self._clearance_spin = _deg_spin()
         right_form.addRow("Freiwinkel", self._clearance_spin)
         self._tip_angle_spin = _deg_spin()
         right_form.addRow("Spitzenwinkel", self._tip_angle_spin)
         self._taper_angle_spin = _deg_spin()
         right_form.addRow("Konuswinkel", self._taper_angle_spin)
-        self._cutting_speed_spin = QDoubleSpinBox()
-        self._cutting_speed_spin.setRange(0.0, 10000.0)
-        self._cutting_speed_spin.setSuffix(" m/min")
-        right_form.addRow("Schnittgeschwindigkeit (vc)", self._cutting_speed_spin)
-        self._feed_rate_spin = QDoubleSpinBox()
-        self._feed_rate_spin.setRange(0.0, 100000.0)
-        self._feed_rate_spin.setSuffix(" mm/min")
-        right_form.addRow("Vorschub", self._feed_rate_spin)
         self._manufacturer_edit = QLineEdit()
-        right_form.addRow("Hersteller", self._manufacturer_edit)
+        right_form.addRow("Manufacturer", self._manufacturer_edit)
         self._material_edit = QLineEdit()
         right_form.addRow("Material", self._material_edit)
 
@@ -195,7 +185,7 @@ class ToolDetailPage(QWidget):
 
         # ── Live-preview wiring ──────────────────────────────────────────────
         for spin in (
-            self._diameter_spin, self._flute_length_spin, self._cutting_length_spin,
+            self._diameter_spin, self._cutting_length_spin,
             self._shank_dia_spin, self._total_len_spin, self._corner_r_spin,
             self._clearance_spin, self._tip_angle_spin, self._taper_angle_spin,
         ):
@@ -211,12 +201,11 @@ class ToolDetailPage(QWidget):
         # use editingFinished/focus-out instead of textChanged so a row
         # isn't rewritten on every keystroke. See _auto_save().
         for spin in (
-            self._diameter_spin, self._flute_length_spin, self._cutting_length_spin,
+            self._diameter_spin,self._cutting_length_spin,
             self._shank_dia_spin, self._total_len_spin, self._corner_r_spin,
             self._clearance_spin, self._tip_angle_spin, self._taper_angle_spin,
             self._pocket_spin, self._z_off_spin, self._service_life_spin,
-            self._used_min_spin, self._flute_count_spin, self._cutting_speed_spin,
-            self._feed_rate_spin,
+            self._used_min_spin, self._flute_count_spin,
         ):
             spin.valueChanged.connect(self._auto_save)
         self._type_combo.currentIndexChanged.connect(self._auto_save)
@@ -248,7 +237,6 @@ class ToolDetailPage(QWidget):
         self._remark_edit.setPlainText(tool.remark)
 
         self._diameter_spin.setValue(tool.diameter)
-        self._flute_length_spin.setValue(tool.flute_length)
         self._cutting_length_spin.setValue(tool.cutting_length)
         self._shank_dia_spin.setValue(tool.shank_diameter)
         self._total_len_spin.setValue(tool.total_length)
@@ -257,8 +245,6 @@ class ToolDetailPage(QWidget):
         self._clearance_spin.setValue(tool.clearance_angle)
         self._tip_angle_spin.setValue(tool.tip_angle)
         self._taper_angle_spin.setValue(tool.taper_angle)
-        self._cutting_speed_spin.setValue(tool.cutting_speed)
-        self._feed_rate_spin.setValue(tool.feed_rate)
         self._manufacturer_edit.setText(tool.manufacturer)
         self._material_edit.setText(tool.material)
 
@@ -289,7 +275,6 @@ class ToolDetailPage(QWidget):
             used_min=self._used_min_spin.value(),
             remark=self._remark_edit.toPlainText(),
             diameter=self._diameter_spin.value(),
-            flute_length=self._flute_length_spin.value(),
             cutting_length=self._cutting_length_spin.value(),
             shank_diameter=self._shank_dia_spin.value(),
             total_length=self._total_len_spin.value(),
@@ -298,8 +283,6 @@ class ToolDetailPage(QWidget):
             clearance_angle=self._clearance_spin.value(),
             tip_angle=self._tip_angle_spin.value(),
             taper_angle=self._taper_angle_spin.value(),
-            cutting_speed=self._cutting_speed_spin.value(),
-            feed_rate=self._feed_rate_spin.value(),
             manufacturer=self._manufacturer_edit.text(),
             material=self._material_edit.text(),
         )

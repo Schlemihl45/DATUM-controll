@@ -117,10 +117,10 @@ CREATE TABLE IF NOT EXISTS tool_holders (
 # around this one, so the seed data lives here where it's actually used).
 _SEED_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
-        tool_number=1, pocket=1, diameter=10.0, z_offset=0.0,
-        remark="10mm Schaftfräser 4-Schneider", tool_type=ToolType.ENDMILL,
-        flute_length=22.0, cutting_length=22.0, shank_diameter=10.0,
-        total_length=72.0, manufacturer="Sandvik", material="VHM",
+        tool_number=1, pocket=1, diameter=6.0, z_offset=0.0,
+        remark="6mm Schaftfräser 4-Schneider", tool_type=ToolType.ENDMILL,
+        flute_length=1.0, cutting_length=1.0, shank_diameter=10.0,
+        total_length=25.0, manufacturer="Sandvik", material="VHM",
         service_life_min=120.0, holder_preset="ER32",
         name="10mm Schaftfräser", flute_count=4,
     ),

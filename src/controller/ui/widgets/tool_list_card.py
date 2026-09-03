@@ -51,6 +51,7 @@ class ToolListCard(DragHoldMixin, Card):
         display_name = tool.name or tool.remark or f"T{tool.tool_number}"
         for col, (label, value) in enumerate((
             ("Name",            display_name),
+            ("Type",            f"{tool.tool_type}"),
             ("Diameter",        f"{tool.diameter:.2f} mm"),
             ("Flute Length",    f"{tool.flute_length:.1f} mm"),
             ("Flutes",          str(tool.flute_count)),
@@ -73,7 +74,7 @@ class ToolListCard(DragHoldMixin, Card):
         self._details_btn.setFixedSize(36, 36)
         self._details_btn.setObjectName("ToolDetailsButton")
         self._details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._details_btn.setToolTip("Werkzeugdetails")
+        self._details_btn.setToolTip("Tool details")
         self._details_btn.clicked.connect(
             lambda: self.tool_details_requested.emit(self._tool_number)
         )
@@ -131,7 +132,7 @@ class ToolListView(QScrollArea):
         container.setLayout(self._col)
         self.setWidget(container)
 
-        self._empty_lbl = QLabel("Keine Werkzeuge gefunden.")
+        self._empty_lbl = QLabel("No tools found")
         self._empty_lbl.setObjectName("CardTitle")
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._col.addWidget(self._empty_lbl)
@@ -147,7 +148,7 @@ class ToolListView(QScrollArea):
                 w.deleteLater()
 
         if not tools:
-            empty = QLabel("Keine Werkzeuge gefunden.")
+            empty = QLabel("No tools found.")
             empty.setObjectName("CardTitle")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._col.addWidget(empty)
