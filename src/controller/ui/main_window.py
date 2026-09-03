@@ -1,6 +1,7 @@
 """
 ui/main_window.py — Application shell: StatusBar + machine info panel +
-page stack (Home <-> MachinePage <-> SettingsPage) + quick-access button row.
+page stack (Home <-> MachinePage <-> SettingsPage <-> ToolPage) +
+quick-access button row.
 
 Every button that represents a real machine command is wired through
 MachineController, never directly to the backend (see MachineController's
@@ -30,6 +31,7 @@ from controller.domain.models import ProgramState
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.machine_page import MachinePage
 from controller.ui.pages.settings_page import SettingsPage
+from controller.ui.pages.tool_page import ToolPage
 from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.machine_info_cards import (
     AxisPositionCard,
@@ -47,6 +49,7 @@ _LIGHT_MDI_PIN = 0
 _HOME_INDEX         = 0
 _MACHINE_PAGE_INDEX = 1
 _SETTINGS_INDEX     = 2
+_TOOLS_PAGE_INDEX   = 3
 
 _NAV_ICON_SIZE = QSize(256, 256)
 
@@ -98,15 +101,14 @@ class MainWindow(QMainWindow):
         home_grid.setSpacing(6)
 
         machine_page_btn = _nav_button("machine")
+        tools_page_btn = _nav_button("tools")
 
         # Pages that don't exist yet — disabled, not faked. See roadmap.
-        tools_page_btn = _nav_button("tools")
         setup_page_btn = _nav_button("setup")
         programs_page_btn = _nav_button("workpieces")
         statistics_page_btn = _nav_button("statistics")
         settings_page_btn = _nav_button("settings")
-        for btn in (tools_page_btn, setup_page_btn, programs_page_btn,
-                    statistics_page_btn):
+        for btn in (setup_page_btn, programs_page_btn, statistics_page_btn):
             btn.setEnabled(False)
             btn.setToolTip("Noch nicht implementiert")
 
@@ -118,6 +120,7 @@ class MainWindow(QMainWindow):
         home_grid.addWidget(settings_page_btn, 2, 1)
 
         machine_page_btn.clicked.connect(self._on_machine_btn_clicked)
+        tools_page_btn.clicked.connect(self._on_tools_btn_clicked)
         settings_page_btn.clicked.connect(self._on_settings_btn_clicked)
 
         # Build pages
@@ -130,6 +133,9 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._stack.addWidget(self._settings_page)              # _SETTINGS_INDEX
+
+        self._tools_page = ToolPage(self)
+        self._stack.addWidget(self._tools_page)                 # _TOOLS_PAGE_INDEX
 
         # Register viewport with ThemeManager for gradient sync
         if theme_manager is not None:
@@ -218,6 +224,9 @@ class MainWindow(QMainWindow):
 
     def _on_settings_btn_clicked(self) -> None:
         self._stack.setCurrentIndex(_SETTINGS_INDEX)
+
+    def _on_tools_btn_clicked(self) -> None:
+        self._stack.setCurrentIndex(_TOOLS_PAGE_INDEX)
 
     def _on_return_clicked(self) -> None:
         self._stack.setCurrentIndex(_HOME_INDEX)
