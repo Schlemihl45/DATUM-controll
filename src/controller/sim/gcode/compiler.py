@@ -1,7 +1,7 @@
 """sim/gcode/compiler.py — GCodeCompiler: load a .nc/.cnc file → GCodeProgram."""
 
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from controller.sim.gcode.lexer          import tokenize
 from controller.sim.gcode.parser import parse, GCodeCommand
@@ -18,6 +18,7 @@ class ToolChange:
 class ToolValidationResult:
     missing: list[int]
     found: list[int]
+    unassigned: list[int] = field(default_factory=list)
     ok: bool = False
 
     def __str__(self) -> str:
@@ -26,10 +27,18 @@ class ToolValidationResult:
         lines = [f"Warning: "]
         for t in self.missing:
             lines.append(f"T{t} - not found")
+        for t in self.unassigned:
+            lines.append(f"T{t} - not assigned to a magazine pocket")
         return "\n".join(lines)
 
 def validate_tools(tool_changes: list[ToolChange], get_tool) -> ToolValidationResult:
-    missing, found, = [], []
+    """Every distinct T-number the program calls out (in first-seen
+    order) is checked twice: does it exist in the tool database at all
+    (-> missing), and if so, is it currently assigned to a real magazine
+    pocket (tool.pocket >= 1 -> otherwise unassigned)? Both are required
+    for `ok` — MachinePage's pre-start check (see machine_page.py's
+    _on_start_clicked()) blocks Start on either."""
+    missing, found, unassigned = [], [], []
     seen = set()
 
     for tc in tool_changes:
@@ -37,12 +46,18 @@ def validate_tools(tool_changes: list[ToolChange], get_tool) -> ToolValidationRe
             continue
         seen.add(tc.tool_number)
 
-        if get_tool(tc.tool_number) is None:
+        tool = get_tool(tc.tool_number)
+        if tool is None:
             missing.append(tc.tool_number)
         else:
             found.append(tc.tool_number)
+            if tool.pocket < 1:
+                unassigned.append(tc.tool_number)
 
-    return ToolValidationResult(missing=missing, found=found, ok=not missing)
+    return ToolValidationResult(
+        missing=missing, found=found, unassigned=unassigned,
+        ok=not missing and not unassigned,
+    )
 
 
 @dataclass

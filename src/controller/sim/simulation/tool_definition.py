@@ -5,6 +5,17 @@ from enum import Enum, auto
 from abc import ABC, abstractmethod
 import numpy as np
 
+# Pocket number meaning "not assigned to any magazine slot". Lives here
+# (the domain-model module), not in a UI widget, so both the persistence
+# layer (persistence/tool_db.py) and the UI (ui/widgets/tool_magazine_bar.py)
+# can share one definition instead of each hard-coding -1 independently.
+# The `pocket` column is a plain INTEGER with no CHECK constraint (see
+# tool_db.py's schema), so this needs no migration — it's just a value
+# convention, mirroring how LinuxCNC tool tables already use out-of-range
+# pocket numbers loosely.
+UNASSIGNED_POCKET = -1
+
+
 class ToolType(Enum):
     ENDMILL    = auto()
     BALL_ENDMILL    = auto()

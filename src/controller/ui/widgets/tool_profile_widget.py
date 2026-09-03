@@ -1,7 +1,7 @@
 """
 ui/widgets/tool_profile_widget.py — ToolProfileWidget: a stylised, live 2D
 side-view silhouette of a tool (+ its holder, if assigned), for
-ToolDetailPage's centre panel.
+ToolCardWidget's expanded body (tool_card_widget.py).
 
 Pure QPainter/QPainterPath — no GL, no mesh. Reuses the exact same
 geometry source sim/simulation/tool_mesh.py's 3D solid-of-revolution
@@ -62,7 +62,7 @@ _MARGIN_Y = 20
 class ToolProfileWidget(QWidget):
     """Live 2D tool silhouette. Call set_tool() whenever the tool (or a
     transient preview built from unsaved form values — see
-    ToolDetailPage._push_live_profile()) changes; no other signal wiring
+    ToolCardWidget._push_live_profile()) changes; no other signal wiring
     needed, it's a pure pull/redraw on each call."""
 
     def __init__(self, parent: QWidget | None = None) -> None:

@@ -21,7 +21,11 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 _HOLD_MS = 350
-_PREVIEW_MAX_SIZE = QSize(72, 48)
+# Enlarged per explicit follow-up request (better touch feedback) — still
+# capped well below the full source widget's on-screen size (the earlier,
+# smaller cap made the preview hard to read while dragging), just no
+# longer the previous, much smaller ceiling.
+_PREVIEW_MAX_SIZE = QSize(140, 100)
 
 
 class DragHoldMixin:

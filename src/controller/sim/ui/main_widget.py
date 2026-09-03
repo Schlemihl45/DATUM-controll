@@ -801,6 +801,16 @@ class DatumSimWidget(QWidget):
         )
         self._carve_thread.start()
 
+    @property
+    def tool_changes(self) -> list:
+        """The currently loaded program's T-command list (compiler.py's
+        ToolChange, one per distinct tool change) — [] if nothing is
+        loaded. Public so MachinePage can run a pre-start tool-
+        availability check (see gcode/compiler.py's validate_tools()) —
+        everything else that reads tool changes does so internally via
+        the private _tool_changes this mirrors."""
+        return self._tool_changes
+
     def presim_check_collisions(
         self,
         on_done: Callable[["CollisionHit | None"], None],

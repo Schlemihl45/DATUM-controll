@@ -1,6 +1,6 @@
 """
 ui/widgets/tool_icons.py — ToolType -> icon mapping, shared by
-ToolListCard, ToolMagazineBar's pocket slots, and ToolDetailPage.
+ToolCardWidget and ToolMagazineBar's pocket slots.
 
 Not every ToolType has a dedicated asset yet (BALL_ENDMILL, TAPER) — those
 fall back to endmill.svg rather than failing/going blank; get_icon() itself

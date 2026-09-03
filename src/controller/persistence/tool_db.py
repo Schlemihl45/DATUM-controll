@@ -47,7 +47,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from controller.sim.simulation.tool_definition import ToolDefinition, ToolType
+from controller.sim.simulation.tool_definition import ToolDefinition, ToolType, UNASSIGNED_POCKET
 from controller.sim.simulation.tool_holder import HolderProfile, STANDARD_HOLDERS
 
 logger = logging.getLogger(__name__)
@@ -269,6 +269,26 @@ class ToolDatabase:
             "SELECT * FROM tools ORDER BY tool_number"
         ).fetchall()
         return [_row_to_tool(r) for r in rows]
+
+    def create_new_tool(self) -> ToolDefinition:
+        """Insert and return a brand-new, blank-ish ToolDefinition — used
+        by ToolPage's "Create new tool" card. tool_number is the lowest
+        unused one above the current maximum (simple MAX+1, not a gap-
+        filling scan — tool numbers are sparse-safe, no requirement to
+        reuse a deleted one). pocket starts UNASSIGNED_POCKET: assignment
+        happens exclusively via drag & drop onto a magazine slot, never
+        here."""
+        existing = [t.tool_number for t in self.all_tools()]
+        next_number = max(existing) + 1 if existing else 1
+        tool = ToolDefinition(
+            tool_number=next_number,
+            pocket=UNASSIGNED_POCKET,
+            diameter=6.0,
+            name="Neues Werkzeug",
+            tool_type=ToolType.ENDMILL,
+        )
+        self.upsert_tool(tool)
+        return tool
 
     def upsert_tool(self, tool: ToolDefinition, _export: bool = True) -> None:
         params = _tool_to_params(tool)
