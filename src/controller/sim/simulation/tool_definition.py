@@ -29,6 +29,9 @@ class ToolDefinition:
         tool_type, cutting_length, shank_diameter, corner_radius,
         tip_angle, taper_angle,
         manufacturer, material, service_life_min, holder_preset
+
+    Further expanded for the ToolPage UI (magazine list + detail editor):
+        name, flute_count, clearance_angle, cutting_speed, feed_rate
     """
     # LinuxCNC Tool Table
     tool_number: int
@@ -55,6 +58,15 @@ class ToolDefinition:
     material: str = ""
     service_life_min: float = 0.0
     used_min: float = 0.0
+
+    # ToolPage fields (added for the tool magazine/detail UI) — kept
+    # separate from `remark` (which stays a free-text note field on the
+    # detail page) and from the LinuxCNC-native fields above.
+    name: str = ""                 # display name, e.g. "10mm Schaftfräser"
+    flute_count: int = 0           # number of cutting edges
+    clearance_angle: float = 0.0   # relief/clearance angle, degrees
+    cutting_speed: float = 0.0     # vc, m/min
+    feed_rate: float = 0.0         # mm/min
 
     # Name of a controller.sim.simulation.tool_holder.HolderProfile preset
     # this tool is mounted in, or None if unassigned. Resolved to the actual

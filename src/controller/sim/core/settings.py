@@ -65,6 +65,7 @@ class AppSettings(QObject):
     stock_y_offset_changed      = Signal(float)
 
     start_safe_z_mm_changed = Signal(float)
+    tool_pocket_count_changed = Signal(int)
 
     # ── Voxel colour presets ───────────────────────────────────────────────────
     VOXEL_COLORS: dict[str, tuple[float, float, float]] = {
@@ -525,3 +526,17 @@ class AppSettings(QObject):
     def start_safe_z_mm(self, v: float) -> None:
         self._qs.setValue("sim/start_safe_z_mm", float(v))
         self.start_safe_z_mm_changed.emit(float(v))
+
+    # ── Tool magazine ────────────────────────────────────────────────────────
+
+    @property
+    def tool_pocket_count(self) -> int:
+        """Number of physical tool-magazine pockets shown by ToolPage's
+        pinned magazine bar (P1..Pn). Default 10."""
+        return self._qs.value("tools/pocket_count", 10, type=int)
+
+    @tool_pocket_count.setter
+    def tool_pocket_count(self, v: int) -> None:
+        v = max(1, int(v))
+        self._qs.setValue("tools/pocket_count", v)
+        self.tool_pocket_count_changed.emit(v)
