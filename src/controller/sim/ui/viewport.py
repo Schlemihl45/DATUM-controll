@@ -29,6 +29,7 @@ from controller.sim.core.settings import AppSettings
 from controller.sim.gcode.path_buffer import PathBuffer
 from controller.sim.simulation.tool_mesh import build_tool_mesh
 from controller.sim.simulation.tool_definition import ToolDefinition
+from controller.sim.simulation.tool_holder import HolderProfile
 from controller.sim.simulation.tool_database import get_tool
 
 
@@ -90,7 +91,11 @@ _FRAG_TOOL = """
 #version 330 core
 in vec3 v_color;
 out vec4 f_col;
-void main() { f_col = vec4(v_color, 1.0); }
+uniform float u_collision;
+void main() {
+    vec3 warn = vec3(1.0, 0.15, 0.1);
+    f_col = vec4(mix(v_color, warn, u_collision * 0.85), 1.0);
+}
 """
 
 # Background gradient shader — fullscreen triangle, radial gradient
@@ -325,6 +330,12 @@ class Viewport(QOpenGLWidget):
         # immediately without waiting for the next camera-move event.
         s.voxel_color_changed.connect(lambda _: self.update())
         s.tool_cutting_color_changed.connect(self._on_tool_color_changed)
+        s.show_tool_holder_changed.connect(self._on_show_holder_changed)
+        self._current_holder: HolderProfile | None = None
+
+        # Collision warning state — see set_collision().
+        self._collision_active = False
+        self._collision_point  = np.zeros(3, dtype='f4')
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -345,6 +356,43 @@ class Viewport(QOpenGLWidget):
             self.doneCurrent()
         else:
             self._pending_tool = tool
+        self.update()
+
+    def set_tool_holder(self, holder: HolderProfile | None) -> None:
+        """Set the holder mesh for the currently active tool (or None if
+        this tool has no holder_preset assigned). Only actually rendered
+        while AppSettings.show_tool_holder is on — see _rebuild_tool_mesh()
+        — but tracked unconditionally so toggling that setting on doesn't
+        need the tool re-applied from main_widget.py to pick it up."""
+        self._current_holder = holder
+        if hasattr(self, 'ctx') and getattr(self, '_current_tool', None) is not None:
+            self.makeCurrent()
+            self._rebuild_tool_mesh(self._current_tool)
+            self.doneCurrent()
+            self.update()
+
+    def _on_show_holder_changed(self, _v: bool) -> None:
+        if not hasattr(self, 'ctx') or getattr(self, '_current_tool', None) is None:
+            return
+        self.makeCurrent()
+        self._rebuild_tool_mesh(self._current_tool)
+        self.doneCurrent()
+        self.update()
+
+    def set_collision(self, active: bool, point: np.ndarray | None = None) -> None:
+        """Show/hide the collision warning: tints the tool mesh toward red
+        (u_collision uniform, no rebuild needed) and, while active, draws a
+        static red marker at *point* (world mm) — same point-VAO/shader
+        pattern as the POINT-mode tool cursor, deliberately without
+        animation for this first version. Called from main_widget.py's
+        _handle_collision_state()/sim_reset()."""
+        self._collision_active = active
+        if point is not None:
+            self._collision_point = np.asarray(point, dtype='f4')
+            if hasattr(self, '_collision_vbo'):
+                self.makeCurrent()
+                self._collision_vbo.write(self._collision_point.tobytes())
+                self.doneCurrent()
         self.update()
 
     def _on_tool_color_changed(self, _name: str) -> None:
@@ -498,6 +546,21 @@ class Viewport(QOpenGLWidget):
             ],
         )
 
+        # Collision warning marker — one red point, position pushed by
+        # set_collision(); reuses the generic in_pos/in_col shader (_prog),
+        # same as the cursor above.
+        self._collision_vbo = self.ctx.buffer(self._collision_point.tobytes(), dynamic=True)
+        self._collision_color_vbo = self.ctx.buffer(
+            np.array([1.0, 0.15, 0.1], dtype='f4').tobytes()
+        )
+        self._collision_vao = self.ctx.vertex_array(
+            self._prog,
+            [
+                (self._collision_vbo, '3f', 'in_pos'),
+                (self._collision_color_vbo, '3f', 'in_col'),
+            ],
+        )
+
         # Resolve pending data uploaded before GL was ready
         if hasattr(self, '_pending_tool'):
             self._rebuild_tool_mesh(self._pending_tool)
@@ -575,6 +638,7 @@ class Viewport(QOpenGLWidget):
         if self._tool_mode == ToolMode.CYLINDER and self._cyl_vao is not None:
             self._tool_prog['u_mvp'].write(mvp.T.tobytes())
             self._tool_prog['u_tool_pos'].write(self._tool_pos.tobytes())
+            self._tool_prog['u_collision'].value = 1.0 if self._collision_active else 0.0
             self._cyl_vao.render(moderngl.TRIANGLES)
 
         # 6. Point cursor (always on top — no depth test)
@@ -582,6 +646,13 @@ class Viewport(QOpenGLWidget):
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.point_size = 12.0
             self._cursor_vao.render(moderngl.POINTS, vertices=1)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+
+        # 6b. Collision warning marker (always on top — no depth test)
+        if self._collision_active:
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.ctx.point_size = 20.0
+            self._collision_vao.render(moderngl.POINTS, vertices=1)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
         if self._perf:
@@ -615,8 +686,10 @@ class Viewport(QOpenGLWidget):
 
     def _rebuild_tool_mesh(self, tool: ToolDefinition) -> None:
         """Upload a new tool solid-of-revolution mesh to the GPU."""
+        s = AppSettings.instance()
+        holder = self._current_holder if s.show_tool_holder else None
         verts, norms, colors = build_tool_mesh(
-            tool, cutting_color=AppSettings.instance().tool_cutting_color_rgb(),
+            tool, cutting_color=s.tool_cutting_color_rgb(), holder=holder,
         )
 
         if self._cyl_vao is not None:

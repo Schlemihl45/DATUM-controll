@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from controller.core.machine.controller import MachineController
+from controller.domain.models import ProgramState
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.machine_page import MachinePage
 from controller.ui.pages.settings_page import SettingsPage
@@ -162,6 +163,28 @@ class MainWindow(QMainWindow):
         self.return_btn.clicked.connect(self._on_return_clicked)
         button_row.addWidget(self.return_btn)
 
+        # Feed Hold — reachable from this app-wide quick bar (outside
+        # self._stack, so it survives page navigation) regardless of which
+        # page is showing, per "von überall gestoppt werden kann". Only
+        # shown while a program is actually RUNNING (see
+        # _on_program_state_for_quickbar) — toggles the real
+        # MachineController.set_feed_hold(), distinct from MachinePage's
+        # own Pause button (pause_program(), a full resumable pause).
+        self.feed_hold_btn = CardButton(
+            "Feed Hold", icon=get_icon("player-pause", tint=True, size=QSize(40, 40)),
+            icon_size=40,
+        )
+        self.feed_hold_btn.setCheckable(True)
+        self.feed_hold_btn.setProperty("variant", "feed_hold")
+        self.feed_hold_btn.setFixedSize(100, 100)
+        self.feed_hold_btn.setVisible(False)
+        self.feed_hold_btn.toggled.connect(self._controller.set_feed_hold)
+        self._controller.feed_hold_changed.connect(self.feed_hold_btn.setChecked)
+        self._controller.program_state_changed.connect(
+            self._on_program_state_for_quickbar
+        )
+        button_row.addWidget(self.feed_hold_btn)
+
         # -------------------------------------------------------
         # Layout
         # -------------------------------------------------------
@@ -195,6 +218,11 @@ class MainWindow(QMainWindow):
 
     def _on_return_clicked(self) -> None:
         self._stack.setCurrentIndex(_HOME_INDEX)
+
+    def _on_program_state_for_quickbar(self, state: ProgramState) -> None:
+        """Feed Hold only makes sense — and is only shown — while a
+        program is actually RUNNING; it stays out of the way otherwise."""
+        self.feed_hold_btn.setVisible(state == ProgramState.RUNNING)
 
     # ------------------------------------------------------------------
     # Quick buttons -> AbstractBackend (via MachineController)

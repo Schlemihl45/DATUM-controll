@@ -78,6 +78,21 @@ QLabel {
 }
 """
 
+# Warning variant for the collision pill — same shape, red-tinted.
+_COLLISION_LABEL_STYLE = """
+QLabel {
+    background: rgba(121, 31, 31, 200);
+    border: 1px solid rgba(229, 72, 77, 60%);
+    border-radius: 6px;
+    color: #FFE3E3;
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 13px;
+    font-family: Consolas;
+    font-weight: bold;
+}
+"""
+
 _BTN_STYLE = """
 QPushButton {
     background: transparent;
@@ -327,10 +342,18 @@ class ControlHub(QWidget):
         self._feed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._feed_lbl.setStyleSheet(_LABEL_STYLE)
 
+        # Collision warning pill — not settings-gated like the four above;
+        # visibility is driven purely by set_collision()/clear_collision().
+        self._collision_lbl = QLabel(self._info_container)
+        self._collision_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._collision_lbl.setStyleSheet(_COLLISION_LABEL_STYLE)
+        self._collision_lbl.setVisible(False)
+
         info_row.addWidget(self._datum_lbl)
         info_row.addWidget(self._gcode_lbl)
         info_row.addWidget(self._tool_lbl)
         info_row.addWidget(self._feed_lbl)
+        info_row.addWidget(self._collision_lbl)
 
         root.addWidget(self._info_container)
 
@@ -380,6 +403,7 @@ class ControlHub(QWidget):
             or not self._gcode_lbl.isHidden()
             or not self._tool_lbl.isHidden()
             or not self._feed_lbl.isHidden()
+            or not self._collision_lbl.isHidden()
         )
         self._info_container.setVisible(any_vis)
         # Force the VBoxLayout to recalculate immediately (not deferred)
@@ -423,6 +447,20 @@ class ControlHub(QWidget):
             self._feed_lbl.setText("Rapid")
         else:
             self._feed_lbl.setText(f"F{int(feed_mm_min):>5}")
+
+    def set_collision(self, hit) -> None:
+        """Show the collision warning pill for *hit* (a
+        controller.sim.voxel.collision.CollisionHit) — kept compact (not
+        the full German sentence) so it fits alongside the other pills in
+        the fixed 520px-wide bar."""
+        line = hit.line_number if hit.line_number >= 0 else "?"
+        self._collision_lbl.setText(f"⚠ Zeile {line} ({hit.kind})")
+        self._collision_lbl.setVisible(True)
+        self._sync_info()
+
+    def clear_collision(self) -> None:
+        self._collision_lbl.setVisible(False)
+        self._sync_info()
 
     # ── Button handlers ───────────────────────────────────────────────────────
 

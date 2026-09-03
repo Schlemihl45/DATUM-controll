@@ -42,15 +42,17 @@ from controller.sim.gcode.compiler            import GCodeCompiler
 from controller.sim.simulation.player         import SimulationPlayer
 from controller.sim.simulation.tool_database  import get_tool
 from controller.sim.simulation.tool_definition import ToolDefinition
+from controller.persistence.tool_db           import ToolDatabase
 from controller.sim.core.settings             import AppSettings
 
 # Voxel sim — pure Python/numpy + GLSL raymarching (no C++ required)
 try:
     from controller.sim.voxel.stock      import StockDefinition, StockShape
-    from controller.sim.voxel.gpu_grid   import GpuVoxelGrid
+    from controller.sim.voxel.gpu_grid   import GpuVoxelGrid, solid_material
     from controller.sim.voxel.carver     import VoxelCarver
     from controller.sim.voxel.controller import VoxelSimController
     from controller.sim.voxel.renderer   import VoxelRenderer
+    from controller.sim.voxel.collision  import check_segment, CollisionHit
     _VOXEL_AVAILABLE = True
 except ImportError:
     _VOXEL_AVAILABLE = False
@@ -87,6 +89,17 @@ class DatumSimWidget(QWidget):
     # including during a real MACHINE-mode run.
     tool_changed = Signal(object)
 
+    # Emitted the first time a new VoxelSimController.collision_hit
+    # (collision.CollisionHit) is observed — never re-emitted for the same
+    # hit on subsequent ticks. See _handle_collision_state().
+    collision_detected = Signal(object)
+
+    # Internal plumbing for presim_check_collisions()'s background->main
+    # thread handoff — see that method's docstring for why this (a Qt
+    # signal) is used instead of QTimer.singleShot() from the worker
+    # thread.
+    _presim_collision_done = Signal(object)
+
     _TOOL_MAP = {
         "Endmill":    ToolMode.CYLINDER,
         "Point":      ToolMode.POINT,
@@ -117,6 +130,11 @@ class DatumSimWidget(QWidget):
         self._tool_mode:            ToolMode                = ToolMode.POINT
         self._current_tool:         ToolDefinition | None   = None
         self._last_program                                  = None
+        self._current_line:         int                     = -1
+        # Dedup guard for _handle_collision_state(): the last CollisionHit
+        # already surfaced to the player/viewport/UI, so a still-set
+        # ctrl.collision_hit isn't re-announced every single tick.
+        self._last_reported_collision = None
 
         # Feed/rapid overrides (1.0 = 100%), pushed in from MACHINE mode via
         # set_feed_override()/set_rapid_override() — drive the estimated
@@ -160,6 +178,7 @@ class DatumSimWidget(QWidget):
         s.stock_z_offset_changed.connect(self._on_stock_settings_changed)
         s.stock_height_changed.connect(self._on_stock_settings_changed)
         s.stock_round_radius_changed.connect(self._on_stock_settings_changed)
+        s.collision_detection_enabled_changed.connect(self._on_collision_enabled_changed)
 
         # ── Render tick (~30 fps) ─────────────────────────────────────────────
         self._render_timer = QTimer(self)
@@ -239,14 +258,22 @@ class DatumSimWidget(QWidget):
             grid  = GpuVoxelGrid(self.viewport.ctx, stock)
             carver = VoxelCarver(grid)
 
+            active_tool = self._current_tool or get_tool(1)
             self._voxel_ctrl = VoxelSimController(
                 grid             = grid,
                 carver           = carver,
                 path_points      = self._last_program.path.points,
                 path_arc_lengths = self._last_program.path.arc_lengths,
                 path_feed_rates  = self._last_program.path.feed_rates,
-                tool             = self._current_tool or get_tool(1),
+                tool             = active_tool,
+                path_line_ids    = self._last_program.path.line_ids,
             )
+            self._voxel_ctrl.set_collision_enabled(s.collision_detection_enabled)
+            if active_tool is not None:
+                self._voxel_ctrl.update_holder(
+                    ToolDatabase.instance().get_holder(active_tool.holder_preset)
+                )
+            self._last_reported_collision = None
 
             self._voxel_renderer = VoxelRenderer(self.viewport.ctx, grid)
         finally:
@@ -311,6 +338,10 @@ class DatumSimWidget(QWidget):
         else:
             self._teardown_voxel_sim()
 
+    def _on_collision_enabled_changed(self, enabled: bool) -> None:
+        if self._voxel_ctrl is not None:
+            self._voxel_ctrl.set_collision_enabled(enabled)
+
     def _on_stock_settings_changed(self, *_args) -> None:
         """Any stock geometry setting changed → tear down and rebuild the sim."""
         if not _VOXEL_AVAILABLE:
@@ -326,6 +357,13 @@ class DatumSimWidget(QWidget):
             return
         self._current_tool = tool
         self.viewport.set_tool_definition(tool)
+        # Resolve+push the tool's assigned holder (if any) too — a single
+        # DB lookup per tool change, not per frame. viewport.set_tool_holder()
+        # only actually renders it while AppSettings.show_tool_holder is on;
+        # the voxel controller always factors it into collision checks (its
+        # own on/off switch is AppSettings.collision_detection_enabled).
+        holder = ToolDatabase.instance().get_holder(tool.holder_preset)
+        self.viewport.set_tool_holder(holder)
         # Push to the info pill directly rather than waiting for the next
         # SIM-mode _tick() to refresh it — _tick()'s tool-label refresh only
         # ran while self._mode == "SIM", so MACHINE-mode tool changes (via
@@ -335,6 +373,7 @@ class DatumSimWidget(QWidget):
         self.tool_changed.emit(tool)
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.update_tool(tool)
+            self._voxel_ctrl.update_holder(holder)
 
     def _check_tool_change(self, current_line: int) -> None:
         for tc in self._tool_changes:
@@ -403,6 +442,7 @@ class DatumSimWidget(QWidget):
                 self._last_machine_pos = pos.copy()
 
     def set_line(self, line: int) -> None:
+        self._current_line = line
         self.viewport.set_active_line(line)
         # Keep the tool info field correct during a real machine run too —
         # previously only the SIM-mode _tick() loop applied tool changes,
@@ -484,13 +524,28 @@ class DatumSimWidget(QWidget):
             # never did — Reset looked like it hadn't cleared the stock.
             self.viewport.makeCurrent()
             try:
-                self._voxel_ctrl.reset()
+                self._voxel_ctrl.reset()   # also clears collision_hit — see its docstring
             finally:
                 self.viewport.doneCurrent()
+        self._last_reported_collision = None
+        self.viewport.set_collision(False)
+        self.control_hub.clear_collision()
 
     def sim_seek(self, fraction: float) -> None:
         if self._player:
             self._player.seek(fraction)
+
+    def seek_to_point(self, point: np.ndarray) -> None:
+        """Seek playback to the path position closest to *point* (world
+        mm) — used to jump the sim view to a collision location for
+        inspection after the user cancels a pre-flight-blocked Start."""
+        if self._player is None:
+            return
+        path = self._player._path
+        if path.total_length < 1e-9:
+            return
+        s, _line = path.find_nearest(np.asarray(point, dtype="f4"))
+        self._player.seek(s / path.total_length)
 
     def sim_set_speed(self, speed: float) -> None:
         if self._player:
@@ -543,6 +598,128 @@ class DatumSimWidget(QWidget):
             target=_worker, daemon=True, name="presim"
         )
         self._carve_thread.start()
+
+    def presim_check_collisions(
+        self,
+        on_done: Callable[["CollisionHit | None"], None],
+    ) -> None:
+        """Background, whole-program collision pre-flight check ("Vorab-
+        Check") — run before a real MACHINE-mode Start, not tied to
+        playback speed or the live voxel state.
+
+        Replays the ENTIRE loaded program from a fresh, fully-solid
+        scratch copy of the stock (never the live grid — running this must
+        not touch what's currently on screen), applying T-command tool
+        changes and checking every segment with collision.check_segment()
+        exactly like VoxelSimController.on_tick() does live. Stops at the
+        first hit. Cutting moves are also carved into the scratch array
+        (via a disposable, GPU-free VoxelCarver target) so later segments
+        see material already removed by earlier ones, same as real
+        playback would.
+
+        on_done(hit_or_None) is invoked on the main/GUI thread once the
+        background thread finishes, via a Qt signal (_presim_collision_done)
+        rather than QTimer.singleShot() called from the worker thread —
+        singleShot's timer would belong to the worker thread's (nonexistent)
+        event loop and never fire; a signal's queued cross-thread delivery
+        to a slot living on the GUI thread works regardless. Calls on_done
+        with None immediately, synchronously, no thread spun up, if there's
+        no program loaded or collision detection is disabled.
+        """
+        s = AppSettings.instance()
+        if (
+            not _VOXEL_AVAILABLE
+            or self._last_program is None
+            or not s.collision_detection_enabled
+        ):
+            on_done(None)
+            return
+
+        program = self._last_program
+        path    = program.path
+        if len(path.points) < 2:
+            on_done(None)
+            return
+
+        try:
+            shape = StockShape(s.stock_shape)
+        except ValueError:
+            shape = StockShape.BOUNDING_BOX
+        stock = StockDefinition(
+            shape=shape, voxel_size=s.voxel_size, z_offset_mm=s.stock_z_offset_mm,
+            height_mm=s.stock_height_mm, round_radius_mm=s.stock_round_radius_mm,
+        )
+        stock.build_bbox(path)
+        material = solid_material(stock)
+        bbox, voxel_size = stock.bbox, s.voxel_size
+
+        pts, feeds, line_ids = path.points, path.feed_rates, path.line_ids
+        tool_changes = program.tool_changes
+        initial_tool = (
+            get_tool(tool_changes[0].tool_number) if tool_changes else get_tool(1)
+        )
+        db = ToolDatabase.instance()
+
+        class _CpuMaterialSink:
+            """Minimal duck-typed carve target — implements just what
+            VoxelCarver.carve_segment() actually calls on its grid
+            (.voxel_size/.bbox/.shape/.carve()), writing straight into the
+            scratch numpy array. No GPU, no GpuVoxelGrid instance, so this
+            check never needs a GL context or touches the live grid."""
+
+            def __init__(self, mat: np.ndarray) -> None:
+                self._mat = mat
+                nz, ny, nx = mat.shape
+                self.shape = (nx, ny, nz)
+                self.bbox = bbox
+                self.voxel_size = voxel_size
+
+            def carve(self, ix0, ix1, iy0, iy1, iz0, iz1, mask) -> None:
+                self._mat[iz0:iz1, iy0:iy1, ix0:ix1][mask] = 0
+
+        def _worker() -> None:
+            carver = VoxelCarver(_CpuMaterialSink(material))
+            current_tool = initial_tool
+            current_holder = (
+                db.get_holder(current_tool.holder_preset) if current_tool else None
+            )
+            tc_idx = 0
+            hit: "CollisionHit | None" = None
+
+            for i in range(len(pts) - 1):
+                while (
+                    tc_idx < len(tool_changes)
+                    and tool_changes[tc_idx].line_index <= line_ids[i]
+                ):
+                    current_tool = get_tool(tool_changes[tc_idx].tool_number) or current_tool
+                    current_holder = (
+                        db.get_holder(current_tool.holder_preset) if current_tool else None
+                    )
+                    tc_idx += 1
+                if current_tool is None:
+                    continue
+
+                is_rapid = feeds[i + 1] == 0.0
+                hit = check_segment(
+                    material, bbox, voxel_size, pts[i], pts[i + 1],
+                    current_tool, is_rapid, current_holder,
+                )
+                if hit is not None:
+                    hit.line_number = int(line_ids[i + 1])
+                    break
+                if not is_rapid:
+                    carver.carve_segment(pts[i], pts[i + 1], current_tool)
+
+            self._presim_collision_done.emit(hit)
+
+        def _deliver(hit) -> None:
+            self._presim_collision_done.disconnect(_deliver)
+            on_done(hit)
+
+        self._presim_collision_done.connect(_deliver)
+        threading.Thread(
+            target=_worker, daemon=True, name="presim-collision-check",
+        ).start()
 
     # ── ControlHub wiring ─────────────────────────────────────────────────────
 
@@ -625,7 +802,28 @@ class DatumSimWidget(QWidget):
                     )
                     self._carve_thread.start()
 
+        self._handle_collision_state()
         self.viewport.update()
+
+    def _handle_collision_state(self) -> None:
+        """Surface a newly detected VoxelSimController.collision_hit exactly
+        once — pauses playback, shows the warning marker/tool tint, updates
+        the info pill, and emits collision_detected. A no-op once the same
+        hit has already been reported (dedup via _last_reported_collision),
+        so this is cheap to call unconditionally every tick."""
+        ctrl = self._voxel_ctrl
+        if ctrl is None:
+            return
+        hit = ctrl.collision_hit
+        if hit is None or hit is self._last_reported_collision:
+            return
+        self._last_reported_collision = hit
+        if self._player is not None:
+            self._player.pause()
+            self.control_hub.reset_play_state()
+        self.viewport.set_collision(True, hit.point)
+        self.control_hub.set_collision(hit)
+        self.collision_detected.emit(hit)
 
     def _drive_voxel_carve(self, ctrl: "VoxelSimController", s: float) -> None:
         """Advance voxel carving to *s*, keeping the displayed tool position
@@ -715,6 +913,8 @@ class DatumSimWidget(QWidget):
         CHUNK_MM = 5.0
         s = ctrl.max_s
         while s < s_target and not self._carve_abort.is_set():
+            if ctrl.collision_hit is not None:
+                break   # frozen — further chunks would just no-op past it
             s_next = min(s + CHUNK_MM, s_target)
             carved = ctrl.on_tick(s_next)
             if carved and not self._carve_abort.is_set():
@@ -738,7 +938,14 @@ class DatumSimWidget(QWidget):
             return
         # feed_rate=1.0 means "it is a cutting move" — G0 rapid filtering will
         # be added when MachineController exposes the current feed rate.
-        carved = ctrl.carve_move(start, end, tool, feed_rate=1.0)
+        # Same limitation applies to collision checking here: every MACHINE-
+        # mode move is checked with is_rapid=False (shank/holder-only), so a
+        # real rapid that plows into material isn't caught by this path —
+        # only by the pre-flight whole-program check before Start, which
+        # tessellates from the loaded file and knows real G0/G1 moves apart.
+        carved = ctrl.carve_move(
+            start, end, tool, feed_rate=1.0, line_number=self._current_line,
+        )
         if carved and not self._carve_abort.is_set():
             self._carve_done.set()
 

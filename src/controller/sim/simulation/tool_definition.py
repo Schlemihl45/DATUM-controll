@@ -28,7 +28,7 @@ class ToolDefinition:
     Expanded by:
         tool_type, cutting_length, shank_diameter, corner_radius,
         tip_angle, taper_angle,
-        manufacturer, material, service_life_min
+        manufacturer, material, service_life_min, holder_preset
     """
     # LinuxCNC Tool Table
     tool_number: int
@@ -55,6 +55,13 @@ class ToolDefinition:
     material: str = ""
     service_life_min: float = 0.0
     used_min: float = 0.0
+
+    # Name of a controller.sim.simulation.tool_holder.HolderProfile preset
+    # this tool is mounted in, or None if unassigned. Resolved to the actual
+    # HolderProfile via persistence.tool_db.ToolDatabase.get_holder() — kept
+    # here as just the name (not the resolved object) so ToolDefinition
+    # stays a plain, DB-row-shaped dataclass.
+    holder_preset: str | None = None
 
     @property
     def radius(self) -> float:

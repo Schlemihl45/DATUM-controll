@@ -172,9 +172,16 @@ class MachinePage(QWidget):
         # ── Machine control buttons (right column) ────────────────────────────
         # icon_size=36 keeps a 100×100 Card (16px margins → 68px content)
         # balanced: 36px icon + 4px gap + ~16px label = 56px, neatly centred.
-        self._start_btn = CardButton("Start",     icon=get_icon("start",        tint=True), icon_size=36)
-        self._stop_btn  = CardButton("Feed hold", icon=get_icon("stop",         tint=True), icon_size=36)
-        self._reset_btn = CardButton("Reset",     icon=get_icon("reset",        tint=True), icon_size=36)
+        self._start_btn = CardButton("Start", icon=get_icon("start", tint=True), icon_size=36)
+        # Labeled "Pause" (not "Feed hold") — it calls pause_program(), a
+        # real resumable pause, not MachineController.set_feed_hold()'s
+        # feed-freeze-without-stopping-the-interpreter semantics. That real
+        # Feed Hold now has its own button in the app-wide quick bar
+        # (main_window.py) so it's reachable while a program runs
+        # regardless of which page is showing — this button staying
+        # mislabeled "Feed hold" too would make the two easy to confuse.
+        self._stop_btn  = CardButton("Pause", icon=get_icon("stop", tint=True), icon_size=36)
+        self._reset_btn = CardButton("Reset", icon=get_icon("reset", tint=True), icon_size=36)
         self._single_block_btn = CardButton(
             "Single Block", icon=get_icon("single_block", tint=True), icon_size=32
         )
@@ -234,6 +241,7 @@ class MachinePage(QWidget):
         # crossed during SIM playback AND during a real MACHINE-mode run
         # started via the Start button (see DatumSimWidget._apply_tool()).
         self._sim.tool_changed.connect(self._tool_info.set_tool)
+        self._sim.collision_detected.connect(self._on_live_collision)
 
         self._sync_ui_state(controller.program_state)
 
@@ -282,7 +290,20 @@ class MachinePage(QWidget):
     # ── UI state sync (single source of truth) ────────────────────────────────
 
     def _sync_ui_state(self, state: ProgramState) -> None:
-        """Sync sim mode + button enabled states to the current program state."""
+        """Sync sim mode + button enabled states to the current program state.
+
+        Enabled/disabled directly drives each button's color too — variant
+        "start"/"stop" render green/red only while :enabled in the QSS
+        (dark.qss/light.qss), grey while :disabled — so the state matrix
+        below is the single place that decides both at once:
+
+            State                 Start        Pause/Stop   Reset
+            IDLE, no file         grey/off     grey/off     on
+            IDLE, file loaded     GREEN/on     grey/off     on
+            RUNNING               grey/off     RED/on       grey/off
+            PAUSED                GREEN/on     grey/off     on
+            ERROR                 grey/off     grey/off     on  (only way out)
+        """
         now_running = state == ProgramState.RUNNING
 
         self._sim.set_mode("MACHINE" if now_running else "SIM")
@@ -293,8 +314,14 @@ class MachinePage(QWidget):
         self._sim.set_state(state.name)
 
         file_loaded = self._loaded_path is not None
-        self._start_btn.setEnabled(file_loaded and not now_running)
+        startable = state in (ProgramState.IDLE, ProgramState.PAUSED)
+        self._start_btn.setEnabled(file_loaded and startable)
         self._stop_btn.setEnabled(now_running)
+        # Reset is the only way out of ERROR, and stays available while
+        # paused/idle — just never while a program is actually RUNNING
+        # (rewind_program() itself already refuses that; this just makes
+        # it visibly unavailable rather than silently rejected on click).
+        self._reset_btn.setEnabled(not now_running)
 
     # ── Controller signal handlers ────────────────────────────────────────────
 
@@ -314,6 +341,12 @@ class MachinePage(QWidget):
         Requires the machine to be ON, homed, and idle (checked by
         MachineController.run_program). The 3D simulation viewer is
         independent of this and already running once a file is loaded.
+
+        Before a fresh start (not a resume-from-pause), runs a fast
+        whole-program collision pre-check in the background — see
+        DatumSimWidget.presim_check_collisions(). A clean program starts
+        exactly as before with no perceptible delay; a detected collision
+        blocks Start behind a confirmation dialog instead.
         """
         if self._controller.program_state == ProgramState.PAUSED:
             self._controller.resume_program()
@@ -324,7 +357,67 @@ class MachinePage(QWidget):
             self._load_example_file()
             return
 
-        self._controller.run_program(self._loaded_path)
+        self._sim.presim_check_collisions(self._on_presim_collision_checked)
+
+    def _on_presim_collision_checked(self, hit) -> None:
+        if hit is None:
+            self._controller.run_program(self._loaded_path)
+            return
+
+        from PySide6.QtWidgets import QMessageBox
+
+        line = hit.line_number if hit.line_number >= 0 else "?"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Kollision erkannt")
+        box.setText(
+            f"Kollision in Zeile {line} erkannt ({hit.kind}).\n\n"
+            "Der Werkzeugweg wurde vor dem Start geprüft — an dieser Stelle "
+            "würde das Werkzeug (bzw. Schaft/Aufnahme) vorhandenes Material "
+            "berühren, wo es das nicht sollte."
+        )
+        start_anyway = box.addButton("Trotzdem starten", QMessageBox.ButtonRole.AcceptRole)
+        cancel       = box.addButton("Abbrechen",        QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+
+        if box.clickedButton() is start_anyway:
+            self._controller.run_program(self._loaded_path)
+        else:
+            # Jump the sim view to the collision point for inspection.
+            self._sim.seek_to_point(hit.point)
+            self._sim.viewport.set_collision(True, hit.point)
+
+    def _on_live_collision(self, hit) -> None:
+        """A collision detected DURING a real MACHINE-mode run — unlike the
+        pre-flight check above, there is no "start anyway": the tool has
+        already touched something it shouldn't have, so the machine is
+        stopped immediately and the operator must acknowledge before doing
+        anything else.
+
+        collision_detected also fires while just scrubbing/playing back a
+        program in SIM mode (no real machine involved) — DatumSimWidget
+        already self-pauses SIM playback for that case, so this handler
+        only escalates to a real stop_program() + blocking dialog when a
+        machine program is actually RUNNING; a SIM-mode-only hit is left to
+        the sim widget's own pause + warning-tinted tool + collision pill.
+        """
+        if self._controller.program_state != ProgramState.RUNNING:
+            return
+        self._controller.stop_program()
+
+        from PySide6.QtWidgets import QMessageBox
+
+        line = hit.line_number if hit.line_number >= 0 else "?"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Critical)
+        box.setWindowTitle("Kollision erkannt")
+        box.setText(
+            f"Kollision erkannt bei Zeile {line} ({hit.kind}).\n\n"
+            "Die Maschine wurde gestoppt."
+        )
+        box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
 
     def _on_stop_clicked(self) -> None:
         if self._controller.program_state == ProgramState.RUNNING:

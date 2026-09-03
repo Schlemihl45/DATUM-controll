@@ -1,10 +1,12 @@
 """
 ui/pages/settings_page.py — Application settings page.
 
-The "official" settings page: a left-hand section nav (CardButton, same
-component used everywhere else in the app) + stacked content, covering the
-app theme AND every sim-widget setting (Darstellung/Optik/Simulation/
-Rohteil — sim/ui/overlay/panels/sim_panel.py's build_sections()).
+The "official" settings page, restructured into two thematic top-level
+groups — **General** (app-wide, currently just Theme) and **Simulation**
+(every sim-widget setting: Darstellung/Optik/Simulation/Rohteil, from
+sim/ui/overlay/panels/sim_panel.py's build_sections()) — each its own
+horizontal-nav + stacked-content master-detail panel (_NavStack), with
+Simulation's own sub-nav one level inside General/Simulation's own level.
 
 The sim sections are NOT a separate copy of the settings: each widget here
 is a fresh instance bound to the same AppSettings singleton the sim
@@ -22,6 +24,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QStackedWidget,
@@ -40,8 +43,10 @@ try:
 except ImportError:
     _SIM_SECTIONS_AVAILABLE = False
 
-_NAV_ICON_SIZE = QSize(22, 22)
-_NAV_BTN_SIZE  = QSize(96, 72)
+_NAV_ICON_SIZE = QSize(20, 20)
+_NAV_BTN_SIZE  = QSize(196, 44)   # horizontal: icon left, label right
+_OUTER_ICON_SIZE = QSize(22, 22)
+_OUTER_BTN_SIZE  = QSize(196, 48)
 
 
 # ── Theme section ────────────────────────────────────────────────────────────
@@ -110,14 +115,83 @@ def _section_label(text: str) -> QLabel:
     return lbl
 
 
+# ── Shared master-detail nav (left column of horizontal CardButtons +
+#    QStackedWidget) — used for both SettingsPage's outer General/
+#    Simulation level and Simulation's own inner sub-nav, so the two levels
+#    stay visually and behaviourally identical without duplicating the
+#    wiring twice. ──────────────────────────────────────────────────────────
+
+class _NavStack(QWidget):
+    def __init__(
+        self,
+        sections: list[tuple[str, str, QWidget]],   # (icon_name, label, content widget)
+        btn_size: QSize = _NAV_BTN_SIZE,
+        icon_size: QSize = _NAV_ICON_SIZE,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        nav_col = QVBoxLayout()
+        nav_col.setContentsMargins(10, 14, 10, 14)
+        nav_col.setSpacing(6)
+        nav_col.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._stack = QStackedWidget(self)
+
+        self._nav_buttons: list[CardButton] = []
+        for icon_name, label, widget in sections:
+            self._stack.addWidget(widget)
+            btn = CardButton(
+                label=label,
+                icon=get_icon(icon_name, tint=True, size=icon_size),
+                icon_size=icon_size.width(),
+                orientation=Qt.Orientation.Horizontal,
+            )
+            btn.setToolTip(label)
+            btn.setFixedSize(btn_size)
+            btn.setCheckable(True)
+            btn.setProperty("variant", "sim_nav")
+            idx = len(self._nav_buttons)
+            btn.clicked.connect(lambda _=False, i=idx: self._on_nav_clicked(i))
+            nav_col.addWidget(btn)
+            self._nav_buttons.append(btn)
+
+        nav_col.addStretch()
+
+        # Themed background (matches the app's Card look, same rounding
+        # convention settings_panel.py's left-docked overlay strip uses:
+        # flat on the edge this column attaches to, rounded toward the
+        # content it opens) instead of a bare, unstyled QWidget.
+        nav_widget = QFrame(self)
+        nav_widget.setObjectName("Card")
+        nav_widget.setProperty("variant", "sim_overlay")
+        nav_widget.setLayout(nav_col)
+        nav_widget.setFixedWidth(btn_size.width() + 20)
+
+        root.addWidget(nav_widget)
+        root.addWidget(self._stack, stretch=1)
+
+        if self._nav_buttons:
+            self._on_nav_clicked(0)
+
+    def _on_nav_clicked(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        for i, btn in enumerate(self._nav_buttons):
+            btn.setChecked(i == index)
+
+
 # ── SettingsPage ──────────────────────────────────────────────────────────────
 
 class SettingsPage(QWidget):
     """Application settings page embedded in the main window stack.
 
-    Left-hand section nav + stacked content: Theme, then every sim-widget
-    section (Darstellung/Optik/Simulation/Rohteil), when the sim module is
-    available.
+    Two top-level thematic groups (General, Simulation), each its own
+    _NavStack — General currently holds just Theme; Simulation holds every
+    sim-widget section (Darstellung/Optik/Simulation/Rohteil).
 
     Args:
         theme_manager:  The application ThemeManager instance.
@@ -130,56 +204,32 @@ class SettingsPage(QWidget):
     ) -> None:
         super().__init__(parent)
 
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        nav_col = QVBoxLayout()
-        nav_col.setContentsMargins(12, 16, 12, 16)
-        nav_col.setSpacing(6)
-        nav_col.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self._stack = QStackedWidget(self)
-
-        sections: list[tuple[str, str, QWidget]] = [
-            ("light", "Theme", _ThemeTab(theme_manager, self._stack)),
+        general_sections: list[tuple[str, str, QWidget]] = [
+            ("light", "Theme", _ThemeTab(theme_manager, self)),
         ]
+        general_page = _NavStack(general_sections, parent=self)
+
         if _SIM_SECTIONS_AVAILABLE:
-            for (icon_name, tooltip), widget in zip(SECTION_ICONS, build_sections(self._stack)):
-                sections.append((icon_name, tooltip, widget))
+            sim_sections = [
+                (icon_name, label, widget)
+                for (icon_name, label), widget in zip(SECTION_ICONS, build_sections(self))
+            ]
         else:
             warn = QLabel(
                 "3D simulation not available (moderngl not installed).",
                 styleSheet="color: #8fa0ba; font-size: 12px;",
             )
-            sections.append(("workpieces", "Simulation", warn))
+            sim_sections = [("workpieces", "Simulation", warn)]
+        simulation_page = _NavStack(sim_sections, parent=self)
 
-        self._nav_buttons: list[CardButton] = []
-        for icon_name, label, widget in sections:
-            self._stack.addWidget(widget)
-            btn = CardButton(label=label, icon=get_icon(icon_name, tint=True, size=_NAV_ICON_SIZE),
-                              icon_size=_NAV_ICON_SIZE.width())
-            btn.setToolTip(label)
-            btn.setFixedSize(_NAV_BTN_SIZE)
-            btn.setCheckable(True)
-            btn.setProperty("variant", "sim_nav")
-            idx = len(self._nav_buttons)
-            btn.clicked.connect(lambda _=False, i=idx: self._on_nav_clicked(i))
-            nav_col.addWidget(btn)
-            self._nav_buttons.append(btn)
+        outer_sections: list[tuple[str, str, QWidget]] = [
+            ("setup",     "General",    general_page),
+            ("scan-cube", "Simulation", simulation_page),
+        ]
+        self._outer = _NavStack(
+            outer_sections, btn_size=_OUTER_BTN_SIZE, icon_size=_OUTER_ICON_SIZE, parent=self,
+        )
 
-        nav_col.addStretch()
-
-        nav_widget = QWidget(self)
-        nav_widget.setLayout(nav_col)
-        nav_widget.setFixedWidth(_NAV_BTN_SIZE.width() + 24)
-
-        root.addWidget(nav_widget)
-        root.addWidget(self._stack, stretch=1)
-
-        self._on_nav_clicked(0)
-
-    def _on_nav_clicked(self, index: int) -> None:
-        self._stack.setCurrentIndex(index)
-        for i, btn in enumerate(self._nav_buttons):
-            btn.setChecked(i == index)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self._outer)

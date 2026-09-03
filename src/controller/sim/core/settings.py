@@ -47,6 +47,12 @@ class AppSettings(QObject):
 
     tool_cutting_color_changed = Signal(str)
 
+    show_tool_holder_changed = Signal(bool)
+    collision_detection_enabled_changed = Signal(bool)
+
+    tool_db_path_changed             = Signal(str)
+    linuxcnc_tool_table_path_changed = Signal(str)
+
     # Stock-shape signals (any change requires a sim rebuild)
     stock_shape_changed         = Signal(str)
     stock_z_offset_changed      = Signal(float)
@@ -346,6 +352,57 @@ class AppSettings(QObject):
     def tool_cutting_color_rgb(self) -> tuple[float, float, float]:
         """Current tool cutting-edge colour as (r, g, b) floats 0–1."""
         return self.TOOL_COLORS.get(self.tool_cutting_color, (1.0, 0.84, 0.0))
+
+    @property
+    def show_tool_holder(self) -> bool:
+        """Whether the active tool's holder ("Werkzeugaufnahme") geometry is
+        rendered above the tool shank. Default False — most tools have no
+        holder_preset assigned yet, so this stays off until one is."""
+        return self._qs.value("sim/show_tool_holder", False, type=bool)
+
+    @show_tool_holder.setter
+    def show_tool_holder(self, v: bool) -> None:
+        self._qs.setValue("sim/show_tool_holder", bool(v))
+        self.show_tool_holder_changed.emit(bool(v))
+
+    @property
+    def collision_detection_enabled(self) -> bool:
+        """Whether the voxel engine checks each move for a tool/material
+        collision (rapids touching material; shank/holder touching material
+        on a cutting move). Default True — on unless explicitly disabled."""
+        return self._qs.value("sim/collision_detection_enabled", True, type=bool)
+
+    @collision_detection_enabled.setter
+    def collision_detection_enabled(self, v: bool) -> None:
+        self._qs.setValue("sim/collision_detection_enabled", bool(v))
+        self.collision_detection_enabled_changed.emit(bool(v))
+
+    # ── Persistence paths ──────────────────────────────────────────────────────
+
+    @property
+    def tool_db_path(self) -> str:
+        """Path to the tool database sqlite file. Empty string (default)
+        means "use the platform default app-data location" — resolved by
+        ToolDatabase itself, not here, so this stays a pure string setting
+        with no Qt-app-instance dependency at import time."""
+        return self._qs.value("persistence/tool_db_path", "", type=str)
+
+    @tool_db_path.setter
+    def tool_db_path(self, v: str) -> None:
+        self._qs.setValue("persistence/tool_db_path", v)
+        self.tool_db_path_changed.emit(v)
+
+    @property
+    def linuxcnc_tool_table_path(self) -> str:
+        """Path a real LinuxCNC-format tool.tbl is auto-exported to on every
+        tool database change. Empty string (default) disables the export —
+        no path is configured, so there's nothing to keep in sync yet."""
+        return self._qs.value("persistence/linuxcnc_tool_table_path", "", type=str)
+
+    @linuxcnc_tool_table_path.setter
+    def linuxcnc_tool_table_path(self, v: str) -> None:
+        self._qs.setValue("persistence/linuxcnc_tool_table_path", v)
+        self.linuxcnc_tool_table_path_changed.emit(v)
 
     # ── Stock shape settings ───────────────────────────────────────────────────
 
