@@ -448,11 +448,19 @@ class DatumSimWidget(QWidget):
         self._force_carve_catchup()
 
     def sim_reset(self) -> None:
-        # Stop any in-flight carving thread first to avoid writing to the grid
-        # while we reset it.
+        # Stop any in-flight carving thread and WAIT for it to actually
+        # exit before touching the grid. A timed-out join here used to drop
+        # the Python reference while the OS thread kept running in the
+        # background — free to keep calling carve_segment()/grid.carve()
+        # against the SAME grid right after _voxel_ctrl.reset() re-solidified
+        # it, silently re-carving material back out and making Reset look
+        # like it hadn't cleared the stock. The worker loop (_carve_worker)
+        # already checks _carve_abort at the top of every 5mm chunk, so a
+        # plain join() here only ever waits out however long the chunk that
+        # was already in flight takes to finish — milliseconds in practice.
         self._carve_abort.set()
         if self._carve_thread is not None and self._carve_thread.is_alive():
-            self._carve_thread.join(timeout=0.3)
+            self._carve_thread.join()
         self._carve_abort.clear()
         self._carve_done.clear()
         self._carve_thread = None

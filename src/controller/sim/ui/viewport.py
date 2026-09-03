@@ -30,6 +30,7 @@ from controller.sim.gcode.path_buffer import PathBuffer
 from controller.sim.simulation.tool_mesh import build_tool_mesh
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.sim.simulation.tool_database import get_tool
+from controller.sim.ui import view_cube
 
 
 # ── Render mode enums ────────────────────────────────────────────────────────
@@ -145,6 +146,28 @@ void main() {
     vec3 grad_color = mix(u_grad_top, u_grad_bottom, t);
 
     f_col = vec4(grad_color, corner_alpha);
+}
+"""
+
+# View-cube shader — textured unlit quads (face-label atlas)
+_VERT_CUBE = """
+#version 330 core
+in vec3 in_pos;
+in vec2 in_uv;
+out vec2 v_uv;
+uniform mat4 u_mvp;
+void main() {
+    gl_Position = u_mvp * vec4(in_pos, 1.0);
+    v_uv = in_uv;
+}
+"""
+_FRAG_CUBE = """
+#version 330 core
+in vec2 v_uv;
+out vec4 f_col;
+uniform sampler2D u_tex;
+void main() {
+    f_col = texture(u_tex, v_uv);
 }
 """
 
@@ -278,6 +301,11 @@ class Viewport(QOpenGLWidget):
     All interactions (mouse/touch) modify only the ArcballCamera.
     """
 
+    # Bottom-left view-cube overlay: logical-pixel size + margin from the
+    # widget's corner. See _cube_rect_logical()/_cube_rect_device().
+    _CUBE_SIZE_PX   = 84
+    _CUBE_MARGIN_PX = 14
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.camera = ArcballCamera()
@@ -287,6 +315,11 @@ class Viewport(QOpenGLWidget):
         self._mouse_btn          = None
         self._rotate_accumulated = QPointF(0, 0)
         self._multi_touch_active = False
+        # Set (not None) in mousePressEvent while a press started inside the
+        # view-cube's screen rect — see mousePressEvent()/mouseReleaseEvent().
+        self._cube_press_pos: QPointF | None = None
+        self._gl_size = (1, 1)   # updated by resizeGL(); used to restore the
+                                  # full viewport after drawing the cube sub-region
         self.ROTATE_THRESHOLD    = 16          # pixels before single-finger rotate fires
 
         # Render settings
@@ -523,7 +556,29 @@ class Viewport(QOpenGLWidget):
         # VoxelRenderer — set externally via set_voxel_renderer()
         self._voxel_renderer = None
 
+        # ── View cube (bottom-left navigation gizmo) ────────────────────────
+        self._cube_prog = self.ctx.program(
+            vertex_shader=_VERT_CUBE, fragment_shader=_FRAG_CUBE
+        )
+        cube_v, cube_uv = view_cube.build_cube_mesh()
+        self._cube_vao = self.ctx.vertex_array(
+            self._cube_prog,
+            [
+                (self.ctx.buffer(cube_v.tobytes()),  '3f', 'in_pos'),
+                (self.ctx.buffer(cube_uv.tobytes()), '2f', 'in_uv'),
+            ],
+        )
+        self._cube_vert_count = len(cube_v)
+
+        atlas = view_cube.build_label_atlas()
+        atlas_bytes = bytes(atlas.constBits())
+        self._cube_tex = self.ctx.texture(
+            (atlas.width(), atlas.height()), 4, atlas_bytes,
+        )
+        self._cube_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+
     def resizeGL(self, w: int, h: int) -> None:
+        self._gl_size = (w, h)
         if hasattr(self, 'ctx'):
             self.ctx.viewport = (0, 0, w, h)
 
@@ -611,6 +666,60 @@ class Viewport(QOpenGLWidget):
         self.ctx.disable(moderngl.BLEND)
         self.ctx.enable(moderngl.DEPTH_TEST)
 
+        # 8. View cube — bottom-left navigation gizmo. Rendered into its own
+        # small sub-viewport with an orthographic projection using only the
+        # main camera's rotation (yaw/pitch), not its position/zoom/pan, so
+        # it always shows the current orientation without occluding or being
+        # occluded by the actual 3D scene. clear(viewport=...) both paints an
+        # opaque backdrop panel (for label legibility over a busy scene) and
+        # resets the depth buffer for that sub-region in one call, so the
+        # cube's own faces depth-sort correctly against each other
+        # independent of whatever was drawn there for the main scene.
+        cx, cy, cs = self._cube_rect_device()
+        fbo.clear(0.20, 0.23, 0.28, 1.0, depth=1.0, viewport=(cx, cy, cs, cs))
+        self.ctx.viewport = (cx, cy, cs, cs)
+        cube_mvp = (
+            view_cube.ortho_matrix()
+            @ view_cube.view_matrix(self.camera.yaw, self.camera.pitch)
+        )
+        self._cube_prog['u_mvp'].write(cube_mvp.T.tobytes())
+        self._cube_tex.use(location=0)
+        self._cube_prog['u_tex'].value = 0
+        self._cube_vao.render(moderngl.TRIANGLES, vertices=self._cube_vert_count)
+        self.ctx.viewport = (0, 0, *self._gl_size)
+
+    # ── View cube geometry helpers ────────────────────────────────────────────
+
+    def _cube_rect_device(self) -> tuple[int, int, int]:
+        """(x, y, size) of the view-cube's square sub-viewport in device
+        (framebuffer) pixels, GL convention (origin bottom-left) — matches
+        whatever resizeGL()/ctx.viewport already use."""
+        dpr  = self.devicePixelRatioF()
+        size = max(1, int(self._CUBE_SIZE_PX * dpr))
+        m    = int(self._CUBE_MARGIN_PX * dpr)
+        return m, m, size
+
+    def _cube_rect_logical(self) -> tuple[float, float, float]:
+        """(x, y, size) of the view-cube's square in WIDGET (logical-pixel,
+        Qt convention: origin top-left, y-down) coordinates — for hit-testing
+        against mouse event positions."""
+        size = self._CUBE_SIZE_PX
+        x0   = self._CUBE_MARGIN_PX
+        y0   = self.height() - self._CUBE_MARGIN_PX - size
+        return x0, y0, size
+
+    def _cube_hit_ndc(self, pos: QPointF) -> tuple[float, float] | None:
+        """NDC (x, y) in [-1, 1] for *pos* relative to the cube's on-screen
+        square, or None if *pos* falls outside it."""
+        x0, y0, size = self._cube_rect_logical()
+        lx = pos.x() - x0
+        ly = pos.y() - y0
+        if not (0.0 <= lx <= size and 0.0 <= ly <= size):
+            return None
+        ndc_x = (lx / size) * 2.0 - 1.0
+        ndc_y = 1.0 - (ly / size) * 2.0   # Qt y-down -> NDC/GL y-up
+        return ndc_x, ndc_y
+
     # ── Internal GPU helpers ──────────────────────────────────────────────────
 
     def _rebuild_tool_mesh(self, tool: ToolDefinition) -> None:
@@ -691,11 +800,31 @@ class Viewport(QOpenGLWidget):
     def mousePressEvent(self, e) -> None:
         if e.source() != Qt.MouseEventNotSynthesized:
             return
+        # A left-button press starting inside the view cube is a face-pick
+        # gesture, not a camera drag — swallow it here (never sets
+        # _mouse_btn) so mouseMoveEvent's rotate logic stays inert for the
+        # duration of the press, regardless of where the cursor wanders.
+        # Any other button in that area falls through to normal handling
+        # (e.g. middle-click pan still works there).
+        if e.button() == Qt.LeftButton and self._cube_hit_ndc(e.position()) is not None:
+            self._cube_press_pos = e.position()
+            return
         self._mouse_last = e.position()
         self._mouse_btn  = e.button()
 
     def mouseReleaseEvent(self, e) -> None:
         if e.source() != Qt.MouseEventNotSynthesized:
+            return
+        if self._cube_press_pos is not None:
+            press_pos = self._cube_press_pos
+            self._cube_press_pos = None
+            if _dist(press_pos, e.position()) <= 6:   # click, not a drag
+                ndc = self._cube_hit_ndc(e.position())
+                if ndc is not None:
+                    face = view_cube.pick_face_at(ndc[0], ndc[1], self.camera.yaw, self.camera.pitch)
+                    if face is not None:
+                        self.camera.yaw, self.camera.pitch = view_cube.FACE_VIEWS[face]
+                        self.update()
             return
         self._mouse_btn = None
 
