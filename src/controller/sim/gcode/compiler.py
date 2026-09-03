@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from dataclasses import dataclass
+import numpy as np
 from controller.sim.gcode.lexer          import tokenize
 from controller.sim.gcode.parser import parse, GCodeCommand
 from controller.sim.gcode.motion_planner import plan, MotionSegment
@@ -71,7 +72,15 @@ class GCodeCompiler:
         pass
 
     # Entry Point
-    def load_file(self, path: str) -> GCodeProgram:
+    def load_file(self, path: str, start_position: np.ndarray | None = None) -> GCodeProgram:
+        """Compile a G-code file. *start_position* (default: work origin
+        (0,0,0)) is the assumed machine position before the program's first
+        command — passed straight through to plan()/PathBuffer(), which
+        must each get the SAME value (see PathBuffer.__init__'s docstring).
+        Callers wanting a safer default than work-origin (e.g. the tool
+        retracted above the stock) build one from AppSettings.start_safe_z_mm
+        — kept out of this module so it stays a plain, testable G-code layer
+        with no UI-settings dependency."""
         raw_lines = Path(path).read_text().splitlines()
 
         # Tokenize ALL lines — no filtering here
@@ -86,8 +95,8 @@ class GCodeCompiler:
                 clean_lines.append("")
 
         commands = parse(tokens_per_line)  # parser skips empty lines internally
-        segments = plan(commands)
-        buf = PathBuffer(segments)
+        segments = plan(commands, start_position=start_position)
+        buf = PathBuffer(segments, start_position=start_position)
         tool_changes = _extract_tool_changes(commands)
         tool_validation = validate_tools(tool_changes, get_tool)
 

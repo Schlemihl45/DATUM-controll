@@ -58,6 +58,12 @@ class AppSettings(QObject):
     stock_z_offset_changed      = Signal(float)
     stock_height_changed        = Signal(float)
     stock_round_radius_changed  = Signal(float)
+    stock_width_changed         = Signal(float)
+    stock_depth_changed         = Signal(float)
+    stock_x_offset_changed      = Signal(float)
+    stock_y_offset_changed      = Signal(float)
+
+    start_safe_z_mm_changed = Signal(float)
 
     # ── Voxel colour presets ───────────────────────────────────────────────────
     VOXEL_COLORS: dict[str, tuple[float, float, float]] = {
@@ -445,3 +451,63 @@ class AppSettings(QObject):
     def stock_round_radius_mm(self, v: float) -> None:
         self._qs.setValue("sim/stock_round_radius_mm", float(v))
         self.stock_round_radius_changed.emit(float(v))
+
+    @property
+    def stock_width_mm(self) -> float:
+        """BOUNDING_BOX stock X size in mm. 0.0 = auto (derived from the
+        G-code cutting path's extent + margin, the historical behavior)."""
+        return self._qs.value("sim/stock_width_mm", 0.0, type=float)
+
+    @stock_width_mm.setter
+    def stock_width_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_width_mm", float(v))
+        self.stock_width_changed.emit(float(v))
+
+    @property
+    def stock_depth_mm(self) -> float:
+        """BOUNDING_BOX stock Y size in mm. 0.0 = auto (see stock_width_mm)."""
+        return self._qs.value("sim/stock_depth_mm", 0.0, type=float)
+
+    @stock_depth_mm.setter
+    def stock_depth_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_depth_mm", float(v))
+        self.stock_depth_changed.emit(float(v))
+
+    @property
+    def stock_x_offset_mm(self) -> float:
+        """Distance from the work origin to the stock's X corner (mm).
+        Only meaningful when stock_width_mm is set (not auto) — 0.0 puts
+        the origin exactly at the stock's lower-X edge."""
+        return self._qs.value("sim/stock_x_offset_mm", 0.0, type=float)
+
+    @stock_x_offset_mm.setter
+    def stock_x_offset_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_x_offset_mm", float(v))
+        self.stock_x_offset_changed.emit(float(v))
+
+    @property
+    def stock_y_offset_mm(self) -> float:
+        """Distance from the work origin to the stock's Y corner (mm). See
+        stock_x_offset_mm."""
+        return self._qs.value("sim/stock_y_offset_mm", 0.0, type=float)
+
+    @stock_y_offset_mm.setter
+    def stock_y_offset_mm(self, v: float) -> None:
+        self._qs.setValue("sim/stock_y_offset_mm", float(v))
+        self.stock_y_offset_changed.emit(float(v))
+
+    # ── Simulation start position ───────────────────────────────────────────────
+
+    @property
+    def start_safe_z_mm(self) -> float:
+        """Assumed tool Z position (above work zero) BEFORE the G-code
+        program's first command, mm. Default 100.0 — the simulation's first
+        move is otherwise implicitly a rapid FROM the work origin itself,
+        which is usually inside/at the stock and reads as a false-positive
+        collision. Takes effect on the next file (re)load, not live."""
+        return self._qs.value("sim/start_safe_z_mm", 100.0, type=float)
+
+    @start_safe_z_mm.setter
+    def start_safe_z_mm(self, v: float) -> None:
+        self._qs.setValue("sim/start_safe_z_mm", float(v))
+        self.start_safe_z_mm_changed.emit(float(v))

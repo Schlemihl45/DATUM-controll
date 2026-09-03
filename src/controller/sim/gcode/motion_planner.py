@@ -64,11 +64,17 @@ class ModalState:
     distance mode (G90/G91), programmed feed rate, and current position.
     """
 
-    def __init__(self):
+    def __init__(self, start_position: np.ndarray | None = None):
         self.motion:   int         = 0            # Active motion: 0=rapid,1=linear,2=CW arc,3=CCW arc
         self.absolute: bool        = True          # G90=True, G91=False
         self.feed_rate: float      = 0.0           # mm/min
-        self.position: np.ndarray  = np.zeros(3)   # current XYZ in machine coords
+        # Current XYZ in machine coords. Defaults to work-origin (0,0,0) —
+        # start_position lets the caller assume a different (safer) starting
+        # point instead, e.g. a retracted Z, since the program's first move
+        # is otherwise implicitly a rapid FROM here (see plan()'s docstring).
+        self.position: np.ndarray  = (
+            start_position.copy() if start_position is not None else np.zeros(3)
+        )
 
     def resolve_target(self, parameters: dict[str, float]) -> np.ndarray:
         """Compute the target XYZ from the command parameters and current mode."""
@@ -83,16 +89,25 @@ class ModalState:
 
 # ── Public planner entry point ───────────────────────────────────────────────
 
-def plan(commands: list[GCodeCommand]) -> list[MotionSegment]:
+def plan(
+    commands: list[GCodeCommand], start_position: np.ndarray | None = None,
+) -> list[MotionSegment]:
     """Convert a list of parsed G-code commands into motion segments.
 
     Processes G-code modally: later commands inherit the active motion code,
     feed rate, and position from earlier blocks. Non-motion commands (spindle,
     coolant, M-codes) are silently skipped.
 
+    start_position (default (0,0,0), work origin) is the assumed machine
+    position BEFORE the program's first command — the program's first motion
+    segment starts here, since nothing in G-code itself says where the tool
+    actually was beforehand. Callers wanting a safer default (the tool
+    retracted above the stock, not sitting at work-zero) pass one in — see
+    GCodeCompiler.load_file().
+
     Returns a flat list of typed motion segments ready for PathBuffer.
     """
-    modal = ModalState()
+    modal = ModalState(start_position)
     segments: list[MotionSegment] = []
 
     for cmd in commands:

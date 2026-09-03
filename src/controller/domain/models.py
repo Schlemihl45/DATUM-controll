@@ -230,6 +230,19 @@ class Workpiece:
     operations: list[Operation] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
+    # G-code file this workpiece is associated with. There is no "create a
+    # workpiece" UI yet (see persistence.workpiece_db.WorkpieceDatabase) —
+    # the loaded file's path is, for now, the only stable identifier a
+    # simulated program can key a Workpiece record off of.
+    gcode_path: str | None = None
+
+    # Per-workpiece override for AppSettings.collision_detection_enabled:
+    # None = inherit the global setting, True/False = explicit override.
+    # Intentionally has no UI anywhere yet — this is backend/data-model
+    # preparation for a future Workpieces page, not exposed on
+    # MachinePage or the sim-widget's own settings panel.
+    collision_detection_enabled: bool | None = None
+
     @property
     def operation_count(self) -> int:
         return len(self.operations)
