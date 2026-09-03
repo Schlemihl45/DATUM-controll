@@ -31,6 +31,10 @@ def _sort_value(tool: ToolDefinition, key: str):
         return tool.flute_count
     if key == "tool_type":
         return tool.tool_type.name
+    if key == "tool_number":
+        return tool.tool_number
+    if key == "pocket":
+        return tool.pocket   # unassigned (-1) sorts first
     return (tool.name or tool.remark or "").lower()
 
 
@@ -68,6 +72,7 @@ class ToolPage(QWidget):
         self._list.tool_details_requested.connect(self._open_detail)
         self._detail.back_requested.connect(self._close_detail)
         self._magazine_bar.tool_dropped.connect(self._on_pocket_reassigned)
+        self._magazine_bar.tool_clicked.connect(self._open_detail)
 
         self._filter_bar.search_changed.connect(self._refresh_list)
         self._filter_bar.sort_changed.connect(self._refresh_list)
@@ -116,6 +121,13 @@ class ToolPage(QWidget):
         moved = self._db.get_tool(tool_number)
         if moved is None:
             return
+        if target_pocket == UNASSIGNED_POCKET:
+            # Pulled out and dropped nowhere valid — just empty it. No
+            # occupant search: several tools may legitimately share
+            # pocket == UNASSIGNED_POCKET at once.
+            moved.pocket = UNASSIGNED_POCKET
+            self._db.upsert_tool(moved)
+            return
         occupant = next(
             (t for t in self._db.all_tools()
              if t.pocket == target_pocket and t.tool_number != tool_number),
@@ -130,6 +142,16 @@ class ToolPage(QWidget):
         # (both upsert_tool() calls above emit it).
 
     # ── List <-> Detail navigation ──────────────────────────────────────────
+
+    def is_showing_detail(self) -> bool:
+        """Whether ToolDetailPage is currently the visible sub-page — used
+        by main_window.py's app-wide Return button to close the detail
+        view first instead of jumping straight to Home."""
+        return self._detail_stack.currentIndex() == _DETAIL_INDEX
+
+    def close_detail(self) -> None:
+        """Public wrapper around _close_detail() for main_window.py."""
+        self._close_detail()
 
     def _open_detail(self, tool_number: int) -> None:
         tool = self._db.get_tool(tool_number)

@@ -4,31 +4,34 @@ list) and ToolListView (the scrollable list of them).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QMimeData, Signal
+from PySide6.QtCore import Qt, QMimeData, QSize, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
-    QGridLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QGridLayout, QLabel, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
-from controller.ui.widgets.card_button import CardButton
+from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
 from controller.ui.widgets.tool_icons import tool_type_icon
 from controller.ui.widgets.tool_magazine_bar import TOOL_MIME_TYPE
 
 
-class ToolListCard(Card):
+class ToolListCard(DragHoldMixin, Card):
     """One row: pocket number | type icon | 2x4 name/diameter/flute-length/
     flutes grid | details button. Also a drag source (same MIME type
     ToolMagazineBar's pocket slots use) so a tool can be dragged straight
-    from the list onto a magazine pocket."""
+    from the list onto a magazine pocket — gated by DragHoldMixin (press-
+    and-hold + move threshold) so an ordinary click never misfires as a
+    drag (see tool_drag.py)."""
 
     tool_details_requested = Signal(int)   # tool_number
 
     def __init__(self, tool: ToolDefinition, parent: QWidget | None = None) -> None:
         super().__init__(title=None, parent=parent, orientation=Qt.Orientation.Horizontal)
         self._tool_number = tool.tool_number
+        self._dh_init()
         self.content_layout.setSpacing(12)
 
         pocket_lbl = QLabel(str(tool.pocket) if tool.pocket >= 1 else "-")
@@ -62,8 +65,14 @@ class ToolListCard(Card):
         grid_widget.setLayout(grid)
         self.content_layout.addWidget(grid_widget, stretch=1)
 
-        self._details_btn = CardButton(icon=get_icon("settings", tint=True), icon_size=22)
-        self._details_btn.setFixedSize(40, 40)
+        # Plain QToolButton, not the Card-based CardButton — Card's
+        # hardcoded 16px margins don't fit a compact 36px inline button.
+        self._details_btn = QToolButton()
+        self._details_btn.setIcon(get_icon("settings", tint=True))
+        self._details_btn.setIconSize(QSize(20, 20))
+        self._details_btn.setFixedSize(36, 36)
+        self._details_btn.setObjectName("ToolDetailsButton")
+        self._details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._details_btn.setToolTip("Werkzeugdetails")
         self._details_btn.clicked.connect(
             lambda: self.tool_details_requested.emit(self._tool_number)
@@ -74,16 +83,33 @@ class ToolListCard(Card):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     # ── Drag source (into a magazine pocket — see tool_magazine_bar.py) ────────
+    # Gated by DragHoldMixin: the drag itself only starts from
+    # mouseMoveEvent, once press-and-hold + a move past the threshold are
+    # both satisfied — see tool_drag.py's module docstring for why.
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setData(TOOL_MIME_TYPE, str(self._tool_number).encode("utf-8"))
-            drag.setMimeData(mime)
-            drag.setPixmap(self.grab())
-            drag.exec(Qt.DropAction.MoveAction)
+            self._dh_press(event.position().toPoint())
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._dh_move(event.position().toPoint()):
+            self._dh_release()
+            self._start_drag()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._dh_release()
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self) -> None:
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(TOOL_MIME_TYPE, str(self._tool_number).encode("utf-8"))
+        drag.setMimeData(mime)
+        drag.setPixmap(scaled_drag_pixmap(self))
+        drag.exec(Qt.DropAction.MoveAction)
 
 
 class ToolListView(QScrollArea):

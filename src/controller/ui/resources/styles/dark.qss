@@ -283,3 +283,32 @@ QPushButton:hover {
 QPushButton:pressed {
     background: rgba(35, 42, 53, 255);
 }
+
+/* ToolPage: "In Magazine" filter toggle (tool_filter_bar.py) — plain
+   QPushButton rather than the Card-based CardButton (Card's hardcoded
+   16px margins don't fit a compact, row-height toggle). Base look/hover/
+   pressed already come from the generic QPushButton rule above; only the
+   checked state is new. */
+QPushButton#ToolFilterToggle:checked {
+    background: rgba(76, 111, 224, 0.35);
+    border: 1px solid rgba(120, 155, 230, 0.6);
+    color: #FFFFFF;
+}
+
+/* ToolPage: per-row "details" button (tool_list_card.py) — plain
+   QToolButton for the same reason (Card's margins don't fit a 36px
+   inline icon button). No QToolButton rule exists anywhere else, so this
+   is a from-scratch style rather than an override. */
+QToolButton#ToolDetailsButton {
+    background: rgba(45, 55, 72, 200);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+}
+
+QToolButton#ToolDetailsButton:hover {
+    background: rgba(60, 75, 96, 255);
+}
+
+QToolButton#ToolDetailsButton:pressed {
+    background: rgba(35, 42, 53, 255);
+}
