@@ -1,12 +1,14 @@
 """
 ui/pages/settings_page.py — Application settings page.
 
-The "official" settings page, restructured into two thematic top-level
-groups — **General** (app-wide, currently just Theme) and **Simulation**
+The "official" settings page, restructured into thematic top-level
+groups — **General** (app-wide, currently just Theme), **Simulation**
 (every sim-widget setting: Darstellung/Optik/Simulation/Rohteil, from
-sim/ui/overlay/panels/sim_panel.py's build_sections()) — each its own
-horizontal-nav + stacked-content master-detail panel (_NavStack), with
-Simulation's own sub-nav one level inside General/Simulation's own level.
+sim/ui/overlay/panels/sim_panel.py's build_sections()), and **Tools**
+(ToolPage's magazine size, from tools_settings_panel.py's
+build_tools_sections()) — each its own horizontal-nav + stacked-content
+master-detail panel (_NavStack), with each group's own sub-nav one level
+inside the outer level.
 
 The sim sections are NOT a separate copy of the settings: each widget here
 is a fresh instance bound to the same AppSettings singleton the sim
@@ -42,6 +44,11 @@ try:
     _SIM_SECTIONS_AVAILABLE = True
 except ImportError:
     _SIM_SECTIONS_AVAILABLE = False
+
+from controller.ui.pages.tools_settings_panel import (
+    SECTION_ICONS as TOOLS_SECTION_ICONS,
+    build_tools_sections,
+)
 
 _NAV_ICON_SIZE = QSize(20, 20)
 _NAV_BTN_SIZE  = QSize(196, 44)   # horizontal: icon left, label right
@@ -222,9 +229,16 @@ class SettingsPage(QWidget):
             sim_sections = [("workpieces", "Simulation", warn)]
         simulation_page = _NavStack(sim_sections, parent=self)
 
+        tools_sections = [
+            (icon_name, label, widget)
+            for (icon_name, label), widget in zip(TOOLS_SECTION_ICONS, build_tools_sections(self))
+        ]
+        tools_page = _NavStack(tools_sections, parent=self)
+
         outer_sections: list[tuple[str, str, QWidget]] = [
             ("setup",     "General",    general_page),
             ("scan-cube", "Simulation", simulation_page),
+            ("tools",     "Tools",      tools_page),
         ]
         self._outer = _NavStack(
             outer_sections, btn_size=_OUTER_BTN_SIZE, icon_size=_OUTER_ICON_SIZE, parent=self,

@@ -155,15 +155,16 @@ QFrame#Card[variant="single_block"][checked="true"] {
     border: 1px solid rgba(120, 155, 230, 0.5);
 }
 
-/* Feed Hold — app-wide quick bar (main_window.py). Distinct amber when
-   active rather than Stop's red: a feed hold pauses motion, it isn't an
-   abort. */
+/* Feed Hold — app-wide quick bar (main_window.py). Red as the default
+   state, grey once engaged — this bar has no separate Stop button, so
+   Feed Hold carries Stop's red warning color itself rather than the amber
+   used elsewhere for "engaged" toggles. */
 QFrame#Card[variant="feed_hold"] {
     background: qradialgradient(
         cx: 0.15, cy: 0.1, radius: 1.1,
         fx: 0.15, fy: 0.1,
-        stop: 0 #4A5568,
-        stop: 1 #1F2733
+        stop: 0 #E5484D,
+        stop: 1 #791F1F
     );
 }
 
@@ -171,10 +172,10 @@ QFrame#Card[variant="feed_hold"][checked="true"] {
     background: qradialgradient(
         cx: 0.15, cy: 0.1, radius: 1.1,
         fx: 0.15, fy: 0.1,
-        stop: 0 #E5A83C,
-        stop: 1 #7A4E0F
+        stop: 0 #4A5568,
+        stop: 1 #1F2733
     );
-    border: 1px solid rgba(230, 175, 90, 0.5);
+    border: 1px solid rgba(120, 135, 155, 0.5);
 }
 
 QPlainTextEdit#GCodeView {

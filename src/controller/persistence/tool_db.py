@@ -45,10 +45,34 @@ import re
 import sqlite3
 from pathlib import Path
 
+from PySide6.QtCore import QObject, Signal
+
 from controller.sim.simulation.tool_definition import ToolDefinition, ToolType
 from controller.sim.simulation.tool_holder import HolderProfile, STANDARD_HOLDERS
 
 logger = logging.getLogger(__name__)
+
+
+class ToolDatabaseSignals(QObject):
+    """Qt signal bridge for ToolDatabase writes.
+
+    Kept deliberately separate from ToolDatabase itself, which stays a
+    plain, Qt-free class (see its module docstring on thread safety —
+    background threads and non-GUI tests construct/use it directly). UI
+    code that needs to react to a tool being edited or deleted (ToolPage's
+    list reload, the collision pre-pass's invalidation when the ACTIVE
+    tool's geometry changes — see DatumSimWidget) connects to this
+    singleton instead of coupling the persistence layer to Qt."""
+
+    tool_changed = Signal(int)   # tool_number — emitted by upsert/delete
+
+    _instance: "ToolDatabaseSignals | None" = None
+
+    @classmethod
+    def instance(cls) -> "ToolDatabaseSignals":
+        if cls._instance is None:
+            cls._instance = ToolDatabaseSignals()
+        return cls._instance
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tools (
@@ -72,6 +96,12 @@ CREATE TABLE IF NOT EXISTS tools (
     service_life_min REAL    NOT NULL DEFAULT 0.0,
     used_min         REAL    NOT NULL DEFAULT 0.0,
     holder_preset    TEXT    REFERENCES tool_holders(name)
+    -- name/flute_count/clearance_angle/cutting_speed/feed_rate (ToolPage
+    -- fields) are NOT listed here — they were added after this table
+    -- already existed in the wild, so they're applied via _migrate_schema()
+    -- (ALTER TABLE ADD COLUMN) instead, which also covers a fresh DB (the
+    -- CREATE TABLE above runs first either way, then the migration adds
+    -- whatever's missing — a no-op on a fresh DB that already lacks them).
 );
 
 CREATE TABLE IF NOT EXISTS tool_holders (
@@ -92,6 +122,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         flute_length=22.0, cutting_length=22.0, shank_diameter=10.0,
         total_length=72.0, manufacturer="Sandvik", material="VHM",
         service_life_min=120.0, holder_preset="ER32",
+        name="10mm Schaftfräser", flute_count=4,
     ),
     ToolDefinition(
         tool_number=2, pocket=2, diameter=6.0, z_offset=0.0,
@@ -99,6 +130,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         flute_length=15.0, cutting_length=15.0, shank_diameter=6.0,
         total_length=60.0, manufacturer="Sandvik", material="VHM",
         service_life_min=90.0, holder_preset="ER20",
+        name="6mm Kugelfräser", flute_count=2,
     ),
     ToolDefinition(
         tool_number=3, pocket=3, diameter=8.0, z_offset=0.0,
@@ -106,6 +138,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         flute_length=20.0, cutting_length=20.0, shank_diameter=8.0,
         total_length=65.0, corner_radius=1.0, manufacturer="Kennametal",
         material="VHM", service_life_min=150.0, holder_preset="ER25",
+        name="8mm Torusfräser r=1mm", flute_count=4,
     ),
     ToolDefinition(
         tool_number=4, pocket=4, diameter=12.0, z_offset=0.0,
@@ -113,6 +146,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         flute_length=10.0, cutting_length=10.0, shank_diameter=8.0,
         total_length=50.0, tip_angle=90.0, manufacturer="Datron",
         material="VHM", service_life_min=200.0, holder_preset="ER25",
+        name="90° Gravurfräser", flute_count=2,
     ),
     ToolDefinition(
         tool_number=5, pocket=5, diameter=8.0, z_offset=0.0,
@@ -120,6 +154,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         flute_length=75.0, cutting_length=75.0, shank_diameter=8.0,
         total_length=115.0, tip_angle=118.0, manufacturer="Gühring",
         material="HSS-E", service_life_min=60.0, holder_preset="ER25",
+        name="8mm Spiralbohrer", flute_count=2,
     ),
     ToolDefinition(
         tool_number=6, pocket=6, diameter=10.0, z_offset=0.0,
@@ -127,7 +162,21 @@ _SEED_TOOLS: list[ToolDefinition] = [
         flute_length=18.0, cutting_length=18.0, shank_diameter=10.0,
         total_length=65.0, taper_angle=5.0, manufacturer="Datron",
         material="VHM", service_life_min=100.0, holder_preset="ER32",
+        name="10mm Konusfräser 5°", flute_count=2,
     ),
+]
+
+# Columns added to `tools` after the table already existed in deployed
+# DBs — applied via _migrate_schema()'s idempotent ALTER TABLE ADD COLUMN,
+# rather than folded into _SCHEMA's CREATE TABLE, so an existing tools.db
+# (and its data) keeps working without a manual migration step. See
+# ToolDefinition's docstring for what each field means.
+_NEW_COLUMNS: list[tuple[str, str]] = [
+    ("name",            "TEXT NOT NULL DEFAULT ''"),
+    ("flute_count",     "INTEGER NOT NULL DEFAULT 0"),
+    ("clearance_angle", "REAL NOT NULL DEFAULT 0.0"),
+    ("cutting_speed",   "REAL NOT NULL DEFAULT 0.0"),
+    ("feed_rate",       "REAL NOT NULL DEFAULT 0.0"),
 ]
 
 _TOOL_TBL_LINE_RE = re.compile(
@@ -160,7 +209,24 @@ class ToolDatabase:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._migrate_schema()
         self._seed_if_empty()
+
+    def _migrate_schema(self) -> None:
+        """Add any of _NEW_COLUMNS not already present on `tools`.
+
+        Idempotent (checks PRAGMA table_info first) — a no-op on a DB
+        that's already current, so this is safe to run on every startup.
+        Existing rows get the new columns' DEFAULT retroactively (SQLite's
+        standard ALTER TABLE ADD COLUMN behavior); no data is lost and no
+        manual migration step is needed."""
+        existing = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(tools)")
+        }
+        for col, ddl in _NEW_COLUMNS:
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE tools ADD COLUMN {col} {ddl}")
+        self._conn.commit()
 
     @staticmethod
     def _resolve_default_path() -> str:
@@ -213,13 +279,15 @@ class ToolDatabase:
                 remark, tool_type, flute_length, cutting_length,
                 shank_diameter, total_length, corner_radius, tip_angle,
                 taper_angle, manufacturer, material, service_life_min,
-                used_min, holder_preset
+                used_min, holder_preset, name, flute_count, clearance_angle,
+                cutting_speed, feed_rate
             ) VALUES (
                 :tool_number, :pocket, :diameter, :z_offset, :x_offset, :y_offset,
                 :remark, :tool_type, :flute_length, :cutting_length,
                 :shank_diameter, :total_length, :corner_radius, :tip_angle,
                 :taper_angle, :manufacturer, :material, :service_life_min,
-                :used_min, :holder_preset
+                :used_min, :holder_preset, :name, :flute_count, :clearance_angle,
+                :cutting_speed, :feed_rate
             )
             ON CONFLICT(tool_number) DO UPDATE SET
                 pocket=excluded.pocket, diameter=excluded.diameter,
@@ -232,18 +300,23 @@ class ToolDatabase:
                 corner_radius=excluded.corner_radius, tip_angle=excluded.tip_angle,
                 taper_angle=excluded.taper_angle, manufacturer=excluded.manufacturer,
                 material=excluded.material, service_life_min=excluded.service_life_min,
-                used_min=excluded.used_min, holder_preset=excluded.holder_preset
+                used_min=excluded.used_min, holder_preset=excluded.holder_preset,
+                name=excluded.name, flute_count=excluded.flute_count,
+                clearance_angle=excluded.clearance_angle,
+                cutting_speed=excluded.cutting_speed, feed_rate=excluded.feed_rate
             """,
             params,
         )
         self._conn.commit()
         if _export:
             self._export_tool_tbl()
+        ToolDatabaseSignals.instance().tool_changed.emit(tool.tool_number)
 
     def delete_tool(self, tool_number: int) -> None:
         self._conn.execute("DELETE FROM tools WHERE tool_number = ?", (tool_number,))
         self._conn.commit()
         self._export_tool_tbl()
+        ToolDatabaseSignals.instance().tool_changed.emit(tool_number)
 
     # ── Holders ──────────────────────────────────────────────────────────────
 
@@ -343,6 +416,7 @@ class ToolDatabase:
 # ── Row <-> dataclass mapping ──────────────────────────────────────────────────
 
 def _row_to_tool(row: sqlite3.Row) -> ToolDefinition:
+    keys = row.keys()
     return ToolDefinition(
         tool_number=row["tool_number"], pocket=row["pocket"],
         diameter=row["diameter"], z_offset=row["z_offset"],
@@ -354,6 +428,16 @@ def _row_to_tool(row: sqlite3.Row) -> ToolDefinition:
         taper_angle=row["taper_angle"], manufacturer=row["manufacturer"],
         material=row["material"], service_life_min=row["service_life_min"],
         used_min=row["used_min"], holder_preset=row["holder_preset"],
+        # These columns are added by _migrate_schema() rather than _SCHEMA
+        # — guard with "in keys" so a row read mid-migration (shouldn't
+        # normally happen, __init__ always migrates before any query, but
+        # cheap insurance) degrades to the field's own default rather than
+        # raising.
+        name=row["name"] if "name" in keys else "",
+        flute_count=row["flute_count"] if "flute_count" in keys else 0,
+        clearance_angle=row["clearance_angle"] if "clearance_angle" in keys else 0.0,
+        cutting_speed=row["cutting_speed"] if "cutting_speed" in keys else 0.0,
+        feed_rate=row["feed_rate"] if "feed_rate" in keys else 0.0,
     )
 
 
@@ -369,6 +453,9 @@ def _tool_to_params(tool: ToolDefinition) -> dict:
         "taper_angle": tool.taper_angle, "manufacturer": tool.manufacturer,
         "material": tool.material, "service_life_min": tool.service_life_min,
         "used_min": tool.used_min, "holder_preset": tool.holder_preset,
+        "name": tool.name, "flute_count": tool.flute_count,
+        "clearance_angle": tool.clearance_angle,
+        "cutting_speed": tool.cutting_speed, "feed_rate": tool.feed_rate,
     }
 
 
