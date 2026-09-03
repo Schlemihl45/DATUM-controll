@@ -14,6 +14,24 @@ chips).
 Call ``reset()`` to rebuild the stock from scratch (e.g. after the user
 presses the Reset button or changes voxel_size).
 
+Collision detection is diagnostic, not a safety interlock, for this
+controller (see check_segment()'s rule in collision.py). A hit NEVER stops
+carving or advancing the High-Water-Mark — every segment is processed
+regardless of its collision result. ``collision_hit`` reflects only the
+LAST segment/call processed (live, not sticky): it goes back to None the
+moment a clean segment follows a colliding one, which is what drives "tint
+the tool red only while it's actually in the collision" in the UI.
+``drain_new_hits()`` separately queues every distinct hit exactly once, for
+one-shot handling (logging) regardless of how long a given collision's
+visual state stays active.
+
+A "grace period" (``_start_clearance_confirmed``) suppresses collision
+reporting from program start until the tool has been confirmed clear of
+material at least once — a safety net for the initial, synthetic tool
+position a compiled path starts from (see
+GCodeCompiler.load_file()/AppSettings.start_safe_z_mm) not being fully
+reliable in every edge case.
+
 Thread safety
 -------------
 ``on_tick()`` mutates ``_max_s``/``_max_idx`` and is NOT safe to call
@@ -25,6 +43,12 @@ fully finished, so at any instant there is exactly one caller. The GPU
 upload (``grid.upload_if_dirty()``) must be called with the GL context
 current — the caller (``DatumSimWidget._tick`` / ``_drive_voxel_carve`` /
 ``_force_carve_catchup``) is responsible for ``makeCurrent()``.
+``carve_move()`` (MACHINE mode) runs on a separate background thread from
+``on_tick()`` (never concurrently with it — MACHINE and SIM mode are
+mutually exclusive) but DOES run concurrently with the main/GL thread
+draining ``drain_new_hits()`` — that method's list-swap is a single,
+GIL-atomic rebind, the same lock-free idiom ``gpu_grid.py``'s
+``_dirty_tiles`` snapshot uses, for the same reason.
 """
 from __future__ import annotations
 
@@ -75,13 +99,15 @@ class VoxelSimController:
         self._tool            = tool
         self._holder          = None   # HolderProfile | None — see update_holder()
         self._collision_enabled = True
-        self._hit = None   # CollisionHit | None — see collision_hit/clear_collision()
+        self._hit: CollisionHit | None = None       # live state — see class docstring
+        self._new_hits: list[CollisionHit] = []      # queue — see drain_new_hits()
+        self._start_clearance_confirmed = False      # see class docstring ("grace period")
 
         # High-Water-Mark: last carved arc-length and corresponding path index
         self._max_s:   float = 0.0
         self._max_idx: int   = 0
 
-    # ── Properties ─────────────────────────────────────────────���──────────────
+    # ── Properties ───────────────────────────────────────────────────────────
 
     @property
     def grid(self) -> GpuVoxelGrid:
@@ -93,21 +119,63 @@ class VoxelSimController:
         return self._max_s
 
     @property
-    def collision_hit(self):
-        """The first unacknowledged collision found, or None. Set by
-        on_tick()/carve_move(); once set, on_tick() stops advancing until
-        clear_collision() or reset() is called — see their docstrings."""
+    def collision_hit(self) -> CollisionHit | None:
+        """LIVE collision state: the result of the most recently processed
+        segment/move, or None if it was clean. Never sticky — see class
+        docstring. Use this to drive transient visual feedback (tool
+        tinting); use drain_new_hits() to react to each distinct hit once
+        (e.g. logging)."""
         return self._hit
 
     def set_collision_enabled(self, v: bool) -> None:
         self._collision_enabled = v
 
+    def drain_new_hits(self) -> list[CollisionHit]:
+        """Pop and return every CollisionHit discovered since the last call
+        (each exactly once) — for one-shot handling (logging) independent
+        of collision_hit's live on/off state. Safe to call from a different
+        thread than the one appending (see class docstring)."""
+        hits, self._new_hits = self._new_hits, []
+        return hits
+
     def clear_collision(self) -> None:
-        """Acknowledge/dismiss the current collision_hit (if any) without
-        touching the carved material or the High-Water-Mark — e.g. after
-        the user reviews it and manually seeks/resumes past it. reset()
-        calls this too, as part of rebuilding the stock from scratch."""
+        """Reset all collision state — live hit, pending queue, and the
+        start-of-program grace period. Called by reset() as part of
+        rebuilding the stock from scratch; safe to call standalone too
+        (e.g. to silence a stale live tint without a full rebuild)."""
         self._hit = None
+        self._new_hits = []
+        self._start_clearance_confirmed = False
+
+    # ── Collision check (shared by on_tick() and carve_move()) ────────────────
+
+    def _check_collision(
+        self, start: np.ndarray, end: np.ndarray, tool: ToolDefinition, is_rapid: bool,
+    ) -> CollisionHit | None:
+        if not self._collision_enabled:
+            return None
+
+        if not self._start_clearance_confirmed:
+            # Grace period: don't report anything yet — instead, probe
+            # whether *end* is now clear. Re-uses check_segment() itself as
+            # the probe: a zero-length "segment" (start==end) with
+            # is_rapid=True forced tests the FULL tool+holder envelope at
+            # that single point regardless of the move's real type — which
+            # is exactly "is the tool currently sitting in open air".
+            # Confirmed clear here unlocks normal checking from the NEXT
+            # segment/move onward; this one stays suppressed either way.
+            clear = check_segment(
+                self._grid.material, self._grid.bbox, self._grid.voxel_size,
+                end, end, tool, True, self._holder,
+            ) is None
+            if clear:
+                self._start_clearance_confirmed = True
+            return None
+
+        return check_segment(
+            self._grid.material, self._grid.bbox, self._grid.voxel_size,
+            start, end, tool, is_rapid, self._holder,
+        )
 
     # ── Playback interface ────────────────────────────────────────────────────
 
@@ -115,17 +183,16 @@ class VoxelSimController:
         """
         Called every render tick with the player's current arc-length.
 
-        Finds path segments between ``_max_s`` and ``current_s``, carves
-        them, and returns True if at least one segment was carved (so the
-        caller knows to call ``grid.upload_if_dirty()``).
+        Finds path segments between ``_max_s`` and ``current_s``, checks
+        each for a collision (non-blocking — see class docstring) and
+        carves it, and returns True if at least one segment was carved (so
+        the caller knows to call ``grid.upload_if_dirty()``).
 
         Rewinding (current_s < _max_s) is a no-op — material is not
         restored.  Call :meth:`reset` to rebuild from scratch.
         """
         if current_s <= self._max_s or len(self._pts) < 2:
             return False
-        if self._hit is not None:
-            return False  # frozen at a collision — see clear_collision()
 
         # Find the path index range [_max_idx, new_idx)
         new_idx = int(np.searchsorted(self._arc, current_s, side="right"))
@@ -135,6 +202,7 @@ class VoxelSimController:
             return False
 
         carved_any = False
+        last_hit: CollisionHit | None = None
         for i in range(self._max_idx, new_idx):
             # Skip G0 rapid moves — feed_rate == 0.0 marks rapid segments.
             # path_buffer.py convention: feed_rates[k] is the feed that
@@ -142,34 +210,24 @@ class VoxelSimController:
             # from i → i+1 is rapid when feeds[i+1] == 0.0.
             is_rapid = self._feeds[i + 1] == 0.0
 
-            if self._collision_enabled:
-                hit = check_segment(
-                    self._grid.material, self._grid.bbox, self._grid.voxel_size,
-                    self._pts[i], self._pts[i + 1], self._tool, is_rapid, self._holder,
+            hit = self._check_collision(self._pts[i], self._pts[i + 1], self._tool, is_rapid)
+            if hit is not None:
+                if self._line_ids is not None:
+                    hit.line_number = int(self._line_ids[i + 1])
+                self._new_hits.append(hit)
+            last_hit = hit
+
+            if not is_rapid:
+                self._carver.carve_segment(
+                    self._pts[i],
+                    self._pts[i + 1],
+                    self._tool,
                 )
-                if hit is not None:
-                    if self._line_ids is not None:
-                        hit.line_number = int(self._line_ids[i + 1])
-                    self._hit = hit
-                    # Freeze the High-Water-Mark just before the colliding
-                    # segment rather than at current_s — a later seek/replay
-                    # up to this same s must re-encounter the same hit
-                    # instead of silently treating it as already carved.
-                    self._max_s   = float(self._arc[i])
-                    self._max_idx = i
-                    return carved_any
+                carved_any = True
 
-            if is_rapid:
-                continue
-            self._carver.carve_segment(
-                self._pts[i],
-                self._pts[i + 1],
-                self._tool,
-            )
-            carved_any = True
-
-        self._max_s   = current_s
-        self._max_idx = new_idx
+        self._hit      = last_hit
+        self._max_s    = current_s
+        self._max_idx  = new_idx
         return carved_any
 
     def carve_move(
@@ -198,31 +256,28 @@ class VoxelSimController:
             G0 rapid move — still collision-checked (rapids must not touch
             material at all — see collision.check_segment), just not carved.
         line_number :
-            Best-known current G-code line, for collision_hit reporting —
-            MACHINE mode has no tessellated path to look this up from, so
-            the caller (DatumSimWidget, which already tracks it for
-            _check_tool_change()) passes its own last-known value.
+            Best-known current G-code line, for the reported hit's
+            line_number — MACHINE mode has no tessellated path to look this
+            up from, so the caller (DatumSimWidget, which already tracks it
+            for _check_tool_change()) passes its own last-known value.
 
         Returns
         -------
         bool
             True if the grid was modified (i.e. ``grid.is_dirty`` is set).
-            False if nothing was carved — including when a collision was
-            just detected (check collision_hit).
+            A collision (see collision_hit/drain_new_hits() after calling)
+            never suppresses carving on its own — only feed_rate <= 0
+            (a rapid) does, same as before.
         """
         is_rapid = feed_rate <= 0.0
 
-        if self._collision_enabled and self._hit is None:
-            hit = check_segment(
-                self._grid.material, self._grid.bbox, self._grid.voxel_size,
-                start, end, tool, is_rapid, self._holder,
-            )
-            if hit is not None:
-                hit.line_number = line_number
-                self._hit = hit
-                return False
+        hit = self._check_collision(start, end, tool, is_rapid)
+        if hit is not None:
+            hit.line_number = line_number
+            self._new_hits.append(hit)
+        self._hit = hit
 
-        if is_rapid or self._hit is not None:
+        if is_rapid:
             return False
         self._carver.carve_segment(start, end, tool)
         return self._grid.is_dirty
@@ -243,8 +298,10 @@ class VoxelSimController:
         Rebuild the stock from scratch.
 
         Resets the material grid to fully solid, clears the High-Water-Mark
-        and any pending collision_hit, and marks the grid dirty so the next
-        upload pushes the full reset.
+        and all collision state (including the start-of-program grace
+        period — a freshly solid stock means the very first move needs to
+        clear it again), and marks the grid dirty so the next upload pushes
+        the full reset.
         """
         self._grid.reset()
         self.clear_collision()

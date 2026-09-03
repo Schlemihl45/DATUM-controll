@@ -4,13 +4,19 @@ sim/voxel/stock.py — Workpiece stock definition (pure Python / numpy).
 Stock shapes
 ------------
 BOUNDING_BOX
-    Rectangular prism.  XY extent derived from G1/G2/G3 cutting moves +
-    margin.  Z top at ``z_offset_mm`` (default 0 = workpiece-zero surface);
-    Z bottom either auto (path z_min − margin) or explicit ``height_mm``.
+    Rectangular prism. XY extent is either explicit (``width_mm``/
+    ``depth_mm`` set, positioned via ``x_offset_mm``/``y_offset_mm`` —
+    distance from the work origin to the stock's near corner) or auto,
+    derived from G1/G2/G3 cutting moves + margin (the historical/default
+    behavior, when width/depth are left at 0.0). Z top at ``z_offset_mm``
+    (default 0 = workpiece-zero surface); Z bottom either auto (path z_min
+    − margin) or explicit ``height_mm`` — unaffected by the X/Y change,
+    both shapes already had this.
 
 ROUND
-    Cylinder centred on the XY centroid of the cutting moves.
-    Same Z convention as BOUNDING_BOX.
+    Cylinder centred on the work origin (0, 0) — i.e. the workpiece
+    coordinate system's own zero, not wherever the cutting moves happen to
+    sit (the previous behavior). Same Z convention as BOUNDING_BOX.
 
 All settings default to "auto from path" so the simulation works
 out-of-the-box even when no stock parameters are configured.
@@ -86,8 +92,22 @@ class StockDefinition:
     # Stock height.  0.0 means "auto": derive from path z_min + margin below.
     height_mm:        float      = 0.0
 
-    # ROUND: cylinder radius from the XY centroid of the cutting extent.
+    # ROUND: cylinder radius, centred on the work origin (0, 0).
     round_radius_mm:  float      = 50.0
+
+    # BOUNDING_BOX explicit size: 0.0 (either, or both) means "auto" —
+    # fall back to the historical path-derived XY extent below. Sizes are
+    # independent (only a non-auto axis uses its offset; the other keeps
+    # deriving from the path) so e.g. a fixed width with auto depth works.
+    width_mm:         float      = 0.0   # X size
+    depth_mm:         float      = 0.0   # Y size
+
+    # BOUNDING_BOX explicit position: distance from the work origin to the
+    # stock's near (lower) X/Y corner. Only meaningful together with a
+    # non-auto width_mm/depth_mm on that axis — 0.0 puts the origin exactly
+    # on that corner.
+    x_offset_mm:      float      = 0.0
+    y_offset_mm:      float      = 0.0
 
     # ── Derived (set by build_bbox) ───────────────────────────────────────────
     bbox: BoundingBox | None = field(default=None, repr=False)
@@ -98,29 +118,38 @@ class StockDefinition:
         """
         Compute and store the bounding box from the path and current settings.
 
-        Only G1/G2/G3 cutting moves (feed_rate > 0) are used for XY extent;
-        G0 rapids are excluded.  Returns self for chaining.
+        Only G1/G2/G3 cutting moves (feed_rate > 0) are used for auto XY
+        extent; G0 rapids are excluded. An explicit width_mm/depth_mm (see
+        their docstrings) overrides the corresponding axis instead of
+        deriving it from the path. Returns self for chaining.
         """
         pts   = path.points       # (N, 3) float32
         feeds = path.feed_rates   # (N,)   float32
 
         mask        = feeds > 0.0
         cutting_pts = pts[mask] if mask.any() else pts
-
-        # XY extents
         margin = self.xy_margin_mm
-        x_min = float(cutting_pts[:, 0].min()) - margin
-        x_max = float(cutting_pts[:, 0].max()) + margin
-        y_min = float(cutting_pts[:, 1].min()) - margin
-        y_max = float(cutting_pts[:, 1].max()) + margin
 
         if self.shape == StockShape.ROUND:
-            # Cylinder centred on cutting extent centroid
-            cx   = (x_min + x_max) * 0.5
-            cy   = (y_min + y_max) * 0.5
-            r    = self.round_radius_mm
-            x_min, x_max = cx - r, cx + r
-            y_min, y_max = cy - r, cy + r
+            # Cylinder centred on the work origin (0, 0) — not the cutting
+            # extent's centroid; round_radius_mm is the only size control.
+            r = self.round_radius_mm
+            x_min, x_max = -r, r
+            y_min, y_max = -r, r
+        else:
+            if self.width_mm > 0.0:
+                x_min = -self.x_offset_mm
+                x_max = x_min + self.width_mm
+            else:
+                x_min = float(cutting_pts[:, 0].min()) - margin
+                x_max = float(cutting_pts[:, 0].max()) + margin
+
+            if self.depth_mm > 0.0:
+                y_min = -self.y_offset_mm
+                y_max = y_min + self.depth_mm
+            else:
+                y_min = float(cutting_pts[:, 1].min()) - margin
+                y_max = float(cutting_pts[:, 1].max()) + margin
 
         # Z extents
         z_top = self.z_offset_mm   # stock top = workpiece zero by default

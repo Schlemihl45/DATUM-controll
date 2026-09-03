@@ -464,14 +464,66 @@ class _StockTab(QWidget):
         self._r_spin.setSingleStep(5.0)
         self._r_spin.setDecimals(1)
         self._r_spin.setSuffix(" mm")
-        self._r_spin.setToolTip("Zylinderradius um den XY-Mittelpunkt.")
+        self._r_spin.setToolTip("Zylinderradius um den Werkstück-Nullpunkt.")
         form.addRow(self._r_label, self._r_spin)
+
+        # Bounding-box-only: explicit size + corner offset. Hidden for ROUND
+        # (see _sync_radius_row(), which despite its name now also drives
+        # these rows' visibility — inverse of the radius row's).
+        self._box_rows: list[tuple[QLabel, QWidget]] = []
+
+        self._w_label = QLabel("Breite (X)")
+        self._w_spin  = QDoubleSpinBox()
+        self._w_spin.setRange(0.0, 2000.0)
+        self._w_spin.setSingleStep(5.0)
+        self._w_spin.setDecimals(1)
+        self._w_spin.setSuffix(" mm")
+        self._w_spin.setSpecialValueText("Auto")
+        self._w_spin.setToolTip("Rohteilbreite (X). 0 = Auto aus G-code-Pfad.")
+        form.addRow(self._w_label, self._w_spin)
+        self._box_rows.append((self._w_label, self._w_spin))
+
+        self._d_label = QLabel("Tiefe (Y)")
+        self._d_spin  = QDoubleSpinBox()
+        self._d_spin.setRange(0.0, 2000.0)
+        self._d_spin.setSingleStep(5.0)
+        self._d_spin.setDecimals(1)
+        self._d_spin.setSuffix(" mm")
+        self._d_spin.setSpecialValueText("Auto")
+        self._d_spin.setToolTip("Rohteiltiefe (Y). 0 = Auto aus G-code-Pfad.")
+        form.addRow(self._d_label, self._d_spin)
+        self._box_rows.append((self._d_label, self._d_spin))
+
+        self._xo_label = QLabel("X-Offset (Ecke)")
+        self._xo_spin  = QDoubleSpinBox()
+        self._xo_spin.setRange(-1000.0, 1000.0)
+        self._xo_spin.setSingleStep(1.0)
+        self._xo_spin.setDecimals(1)
+        self._xo_spin.setSuffix(" mm")
+        self._xo_spin.setToolTip(
+            "Abstand vom Werkstück-Nullpunkt zur unteren X-Kante des Rohteils.\n"
+            "Nur wirksam bei fester Breite (nicht Auto). 0 mm = Nullpunkt liegt\n"
+            "genau auf der Rohteilecke."
+        )
+        form.addRow(self._xo_label, self._xo_spin)
+        self._box_rows.append((self._xo_label, self._xo_spin))
+
+        self._yo_label = QLabel("Y-Offset (Ecke)")
+        self._yo_spin  = QDoubleSpinBox()
+        self._yo_spin.setRange(-1000.0, 1000.0)
+        self._yo_spin.setSingleStep(1.0)
+        self._yo_spin.setDecimals(1)
+        self._yo_spin.setSuffix(" mm")
+        self._yo_spin.setToolTip("Abstand vom Werkstück-Nullpunkt zur unteren Y-Kante. Siehe X-Offset.")
+        form.addRow(self._yo_label, self._yo_spin)
+        self._box_rows.append((self._yo_label, self._yo_spin))
 
         root.addLayout(form)
         root.addStretch()
 
         if not _VOXEL_AVAILABLE:
-            for w in (self._shape_combo, self._z_spin, self._h_spin, self._r_spin):
+            for w in (self._shape_combo, self._z_spin, self._h_spin, self._r_spin,
+                      self._w_spin, self._d_spin, self._xo_spin, self._yo_spin):
                 w.setEnabled(False)
 
         # Load saved
@@ -484,9 +536,13 @@ class _StockTab(QWidget):
         self._shape_combo.blockSignals(False)
 
         for spin, val in [
-            (self._z_spin, s.stock_z_offset_mm),
-            (self._h_spin, s.stock_height_mm),
-            (self._r_spin, s.stock_round_radius_mm),
+            (self._z_spin,  s.stock_z_offset_mm),
+            (self._h_spin,  s.stock_height_mm),
+            (self._r_spin,  s.stock_round_radius_mm),
+            (self._w_spin,  s.stock_width_mm),
+            (self._d_spin,  s.stock_depth_mm),
+            (self._xo_spin, s.stock_x_offset_mm),
+            (self._yo_spin, s.stock_y_offset_mm),
         ]:
             spin.blockSignals(True)
             spin.setValue(val)
@@ -499,12 +555,20 @@ class _StockTab(QWidget):
         self._z_spin.valueChanged.connect(lambda v: setattr(s, "stock_z_offset_mm",    v))
         self._h_spin.valueChanged.connect(lambda v: setattr(s, "stock_height_mm",      v))
         self._r_spin.valueChanged.connect(lambda v: setattr(s, "stock_round_radius_mm", v))
+        self._w_spin.valueChanged.connect( lambda v: setattr(s, "stock_width_mm",     v))
+        self._d_spin.valueChanged.connect( lambda v: setattr(s, "stock_depth_mm",     v))
+        self._xo_spin.valueChanged.connect(lambda v: setattr(s, "stock_x_offset_mm",  v))
+        self._yo_spin.valueChanged.connect(lambda v: setattr(s, "stock_y_offset_mm",  v))
 
         # Read side
         s.stock_shape_changed.connect(self._on_shape_changed)
         s.stock_z_offset_changed.connect(lambda v: _sync_spin(self._z_spin, v))
         s.stock_height_changed.connect(  lambda v: _sync_spin(self._h_spin, v))
         s.stock_round_radius_changed.connect(lambda v: _sync_spin(self._r_spin, v))
+        s.stock_width_changed.connect(   lambda v: _sync_spin(self._w_spin, v))
+        s.stock_depth_changed.connect(   lambda v: _sync_spin(self._d_spin, v))
+        s.stock_x_offset_changed.connect(lambda v: _sync_spin(self._xo_spin, v))
+        s.stock_y_offset_changed.connect(lambda v: _sync_spin(self._yo_spin, v))
 
     def _on_shape(self, idx: int) -> None:
         if 0 <= idx < len(_SHAPE_KEYS):
@@ -526,6 +590,11 @@ class _StockTab(QWidget):
         is_round = (self._shape_combo.currentIndex() == _SHAPE_KEYS.index("round"))
         self._r_label.setVisible(is_round)
         self._r_spin.setVisible(is_round)
+        # Width/depth/corner-offset are BOUNDING_BOX-only — inverse of the
+        # radius row above.
+        for label, spin in self._box_rows:
+            label.setVisible(not is_round)
+            spin.setVisible(not is_round)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

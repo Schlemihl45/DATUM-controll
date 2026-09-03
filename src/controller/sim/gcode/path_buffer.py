@@ -15,9 +15,22 @@ DEFAULT_RAPID_FEED_MM_MIN = 5_000.0
 
 class PathBuffer:
 
-    def __init__(self, segments: list[MotionSegment], max_step_mm: float = 1.0):
-        # Local lists — not retained after conversion
-        positions:   list[np.ndarray] = [np.zeros(3)]
+    def __init__(
+        self,
+        segments: list[MotionSegment],
+        max_step_mm: float = 1.0,
+        start_position: np.ndarray | None = None,
+    ):
+        # Local lists — not retained after conversion. start_position must
+        # match whatever start_position motion_planner.plan() was called
+        # with (see GCodeCompiler.load_file()) — segments[0].start is never
+        # itself appended below (tessellation excludes t=0, "start already
+        # present"), so this seed point IS implicitly segments[0].start;
+        # passing a different value here than plan() used would silently
+        # desync the two and corrupt the very first arc-length step.
+        positions:   list[np.ndarray] = [
+            start_position.copy() if start_position is not None else np.zeros(3)
+        ]
         arc_lengths: list[float]      = [0.0]
         feed_rates:  list[float]      = [0.0]
         line_ids:    list[int]        = [0]
