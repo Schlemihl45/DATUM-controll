@@ -65,14 +65,15 @@ class WorkpieceDatabase:
     def _resolve_default_path() -> str:
         # Same resolution strategy as tool_db.py's ToolDatabase — see its
         # docstring for why these imports are local rather than top-level.
-        from PySide6.QtCore import QStandardPaths
+        from controller.sim.core.settings import AppSettings
 
-        base = QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppDataLocation
-        )
-        if not base:
-            base = str(Path.home() / ".datum-control")
-        return str(Path(base) / "workpieces.db")
+        configured = AppSettings.instance().workpiece_db_path
+        if configured:
+            return configured
+
+        from controller.persistence.paths import db_dir
+
+        return str(db_dir() / "workpieces.db")
 
     # ── Queries ──────────────────────────────────────────────────────────────
 

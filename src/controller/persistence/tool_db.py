@@ -175,14 +175,9 @@ class ToolDatabase:
         if configured:
             return configured
 
-        from PySide6.QtCore import QStandardPaths
+        from controller.persistence.paths import db_dir
 
-        base = QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppDataLocation
-        )
-        if not base:
-            base = str(Path.home() / ".datum-control")
-        return str(Path(base) / "tools.db")
+        return str(db_dir() / "tools.db")
 
     # ── Seeding ──────────────────────────────────────────────────────────────
 

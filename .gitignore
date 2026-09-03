@@ -25,3 +25,7 @@ htmlcov/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# --- Local runtime databases (tools.db, workpieces.db, ...) ---
+# User/runtime data, not source — see persistence/paths.py.
+/data/db/

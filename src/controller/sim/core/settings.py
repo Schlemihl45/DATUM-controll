@@ -51,6 +51,7 @@ class AppSettings(QObject):
     collision_detection_enabled_changed = Signal(bool)
 
     tool_db_path_changed             = Signal(str)
+    workpiece_db_path_changed        = Signal(str)
     linuxcnc_tool_table_path_changed = Signal(str)
 
     # Stock-shape signals (any change requires a sim rebuild)
@@ -388,15 +389,28 @@ class AppSettings(QObject):
     @property
     def tool_db_path(self) -> str:
         """Path to the tool database sqlite file. Empty string (default)
-        means "use the platform default app-data location" — resolved by
-        ToolDatabase itself, not here, so this stays a pure string setting
-        with no Qt-app-instance dependency at import time."""
+        means "use the default location" (persistence/paths.py's
+        <repo_root>/data/db/tools.db) — resolved by ToolDatabase itself,
+        not here, so this stays a pure string setting with no Qt-app-
+        instance dependency at import time."""
         return self._qs.value("persistence/tool_db_path", "", type=str)
 
     @tool_db_path.setter
     def tool_db_path(self, v: str) -> None:
         self._qs.setValue("persistence/tool_db_path", v)
         self.tool_db_path_changed.emit(v)
+
+    @property
+    def workpiece_db_path(self) -> str:
+        """Path to the workpiece database sqlite file. Empty string
+        (default) means "use the default location" — see tool_db_path,
+        same pattern; resolved by WorkpieceDatabase itself."""
+        return self._qs.value("persistence/workpiece_db_path", "", type=str)
+
+    @workpiece_db_path.setter
+    def workpiece_db_path(self, v: str) -> None:
+        self._qs.setValue("persistence/workpiece_db_path", v)
+        self.workpiece_db_path_changed.emit(v)
 
     @property
     def linuxcnc_tool_table_path(self) -> str:
