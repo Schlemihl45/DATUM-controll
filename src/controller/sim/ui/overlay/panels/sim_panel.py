@@ -146,6 +146,9 @@ class _DisplayTab(QWidget):
         self._path_combo = QComboBox()
         self._path_combo.addItems(["Complete", "Progressive", "None"])
         tf.addRow("Pfad-Modus", self._path_combo)
+
+        self._chk_holder = QCheckBox()
+        tf.addRow("Werkzeugaufnahme anzeigen", self._chk_holder)
         root.addLayout(tf)
 
         # Info bar ──────────────────────────────────────────────────────────
@@ -182,6 +185,7 @@ class _DisplayTab(QWidget):
             (self._chk_axes,          s.show_axes),
             (self._chk_grid,          s.show_grid),
             (self._chk_datum_symbol,  s.show_datum_symbol),
+            (self._chk_holder,        s.show_tool_holder),
         ]:
             chk.blockSignals(True)
             chk.setChecked(val)
@@ -202,6 +206,7 @@ class _DisplayTab(QWidget):
         self._chk_axes.toggled.connect(         lambda v: setattr(s, "show_axes",         v))
         self._chk_grid.toggled.connect(         lambda v: setattr(s, "show_grid",         v))
         self._chk_datum_symbol.toggled.connect( lambda v: setattr(s, "show_datum_symbol", v))
+        self._chk_holder.toggled.connect(       lambda v: setattr(s, "show_tool_holder",  v))
 
         # Read side: AppSettings -> widget (keeps every open instance in sync)
         s.tool_mode_changed.connect(lambda v: _sync_combo_text(self._tool_combo, v))
@@ -213,6 +218,7 @@ class _DisplayTab(QWidget):
         s.show_axes_changed.connect(         lambda v: _sync_checkbox(self._chk_axes,          v))
         s.show_grid_changed.connect(         lambda v: _sync_checkbox(self._chk_grid,          v))
         s.show_datum_symbol_changed.connect( lambda v: _sync_checkbox(self._chk_datum_symbol,  v))
+        s.show_tool_holder_changed.connect(  lambda v: _sync_checkbox(self._chk_holder,        v))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -362,6 +368,18 @@ class _VoxelSimTab(QWidget):
         )
         form.addRow("Voxelgröße", self._size_spin)
         root.addLayout(form)
+
+        root.addWidget(_hdr("Sicherheit"))
+        safety_form = QFormLayout(); safety_form.setSpacing(8)
+        self._chk_collision = QCheckBox()
+        self._chk_collision.setToolTip(
+            "Prüft jede Bewegung auf Kollision: Eilgänge dürfen kein "
+            "Material berühren, Zustellungen nur bis zur Schneidenlänge — "
+            "Schaft/Aufnahme darüber gelten als Kollision."
+        )
+        safety_form.addRow("Kollisionserkennung", self._chk_collision)
+        root.addLayout(safety_form)
+
         root.addStretch()
 
         # Load saved
@@ -370,14 +388,21 @@ class _VoxelSimTab(QWidget):
         self._chk.blockSignals(False)
         _sync_spin(self._size_spin, s.voxel_size)
         self._sync_size_state()
+        self._chk_collision.blockSignals(True)
+        self._chk_collision.setChecked(s.collision_detection_enabled)
+        self._chk_collision.blockSignals(False)
 
         # Write side
         self._chk.toggled.connect(self._on_enabled)
         self._size_spin.valueChanged.connect(lambda v: setattr(s, "voxel_size", v))
+        self._chk_collision.toggled.connect(
+            lambda v: setattr(s, "collision_detection_enabled", v))
 
         # Read side
         s.voxel_enabled_changed.connect(self._on_enabled_changed)
         s.voxel_size_changed.connect(lambda v: _sync_spin(self._size_spin, v))
+        s.collision_detection_enabled_changed.connect(
+            lambda v: _sync_checkbox(self._chk_collision, v))
 
     def _sync_size_state(self) -> None:
         self._size_spin.setEnabled(_VOXEL_AVAILABLE and self._chk.isChecked())

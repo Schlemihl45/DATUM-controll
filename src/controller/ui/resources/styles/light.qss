@@ -113,6 +113,11 @@ QFrame#Card[variant="start"] {
     );
 }
 
+QFrame#Card[variant="start"]:disabled {
+    background: #DCE2EA;
+    border: 1px solid rgba(0, 0, 0, 8%);
+}
+
 QFrame#Card[variant="stop"] {
     background: qradialgradient(
         cx: 0.15, cy: 0.1, radius: 1.1,
@@ -120,6 +125,16 @@ QFrame#Card[variant="stop"] {
         stop: 0 #E55A60,
         stop: 1 #A02020
     );
+}
+
+QFrame#Card[variant="stop"]:disabled {
+    background: #DCE2EA;
+    border: 1px solid rgba(0, 0, 0, 8%);
+}
+
+QFrame#Card[variant="reset"]:disabled {
+    background: #DCE2EA;
+    border: 1px solid rgba(0, 0, 0, 8%);
 }
 
 QFrame#Card[variant="single_block"] {
@@ -139,6 +154,28 @@ QFrame#Card[variant="single_block"][checked="true"] {
         stop: 1 #2050A0
     );
     border: 1px solid rgba(80, 120, 200, 0.5);
+}
+
+/* Feed Hold — app-wide quick bar (main_window.py). Distinct amber when
+   active rather than Stop's red: a feed hold pauses motion, it isn't an
+   abort. */
+QFrame#Card[variant="feed_hold"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #C8D4E4,
+        stop: 1 #9AAFC8
+    );
+}
+
+QFrame#Card[variant="feed_hold"][checked="true"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #E0A840,
+        stop: 1 #A06E10
+    );
+    border: 1px solid rgba(190, 140, 50, 0.5);
 }
 
 /* G-code viewer */

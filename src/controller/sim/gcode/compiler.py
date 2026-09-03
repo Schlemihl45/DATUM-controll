@@ -21,7 +21,7 @@ class ToolValidationResult:
 
     def __str__(self) -> str:
         if self.ok:
-            return True
+            return "OK"
         lines = [f"Warning: "]
         for t in self.missing:
             lines.append(f"T{t} - not found")
@@ -41,7 +41,7 @@ def validate_tools(tool_changes: list[ToolChange], get_tool) -> ToolValidationRe
         else:
             found.append(tc.tool_number)
 
-    return ToolValidationResult(missing=missing, found=found, ok=True)
+    return ToolValidationResult(missing=missing, found=found, ok=not missing)
 
 
 @dataclass

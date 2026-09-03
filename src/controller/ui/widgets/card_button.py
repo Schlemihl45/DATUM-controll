@@ -29,8 +29,9 @@ class CardButton(Card):
         icon: QIcon | None = None,
         icon_size: int | QSize = 28,
         parent: QWidget | None = None,
+        orientation: Qt.Orientation = Qt.Orientation.Vertical,
     ) -> None:
-        super().__init__(title=None, parent=parent)
+        super().__init__(title=None, parent=parent, orientation=orientation)
 
         self._icon_size = QSize(icon_size, icon_size) if isinstance(icon_size, int) else icon_size
         self._checkable = False
@@ -38,7 +39,14 @@ class CardButton(Card):
         self.setProperty("checked", False)
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.content_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Horizontal (icon left, label right — e.g. SettingsPage's nav)
+        # left-aligns instead of centering, so the row reads as a normal
+        # left-to-right menu item rather than a centered icon+text cluster.
+        self.content_layout.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            if orientation == Qt.Orientation.Horizontal
+            else Qt.AlignmentFlag.AlignCenter
+        )
 
         self._icon_label = QLabel(self)
         self._icon_label.setObjectName("CardButtonIcon")

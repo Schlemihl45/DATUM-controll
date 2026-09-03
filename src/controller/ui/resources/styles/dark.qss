@@ -108,6 +108,11 @@ QFrame#Card[variant="start"] {
     );
 }
 
+QFrame#Card[variant="start"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
 QFrame#Card[variant="stop"] {
     background: qradialgradient(
         cx: 0.15, cy: 0.1, radius: 1.1,
@@ -116,6 +121,20 @@ QFrame#Card[variant="stop"] {
         stop: 1 #791F1F
     );
 }
+
+QFrame#Card[variant="stop"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
+QFrame#Card[variant="reset"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
+/* Disabled buttons keep the state signal on the background alone (per
+   the app's dimming convention); labels/icons just follow Qt's default
+   disabled palette dimming, no extra rule needed. */
 
 QFrame#Card[variant="single_block"] {
     background: qradialgradient(
@@ -134,6 +153,28 @@ QFrame#Card[variant="single_block"][checked="true"] {
         stop: 1 #23315C
     );
     border: 1px solid rgba(120, 155, 230, 0.5);
+}
+
+/* Feed Hold — app-wide quick bar (main_window.py). Distinct amber when
+   active rather than Stop's red: a feed hold pauses motion, it isn't an
+   abort. */
+QFrame#Card[variant="feed_hold"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #4A5568,
+        stop: 1 #1F2733
+    );
+}
+
+QFrame#Card[variant="feed_hold"][checked="true"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #E5A83C,
+        stop: 1 #7A4E0F
+    );
+    border: 1px solid rgba(230, 175, 90, 0.5);
 }
 
 QPlainTextEdit#GCodeView {

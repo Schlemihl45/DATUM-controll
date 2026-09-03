@@ -41,6 +41,32 @@ import moderngl
 from controller.sim.voxel.stock import StockDefinition, StockShape, BoundingBox
 
 
+def solid_material(stock: StockDefinition) -> np.ndarray:
+    """Build a fresh (Nz, Ny, Nx) uint8 material array respecting *stock*'s
+    shape (BOUNDING_BOX = solid block, ROUND = solid cylinder), 255 =
+    material / 0 = air — the same logic GpuVoxelGrid._init_material() uses,
+    factored out here so it can also be used WITHOUT a live GL context
+    (e.g. DatumSimWidget's pre-flight collision scan, which must build its
+    own disposable scratch copy rather than touch the live grid/GPU state).
+    ``stock.bbox`` must already be set (call ``stock.build_bbox(path)``).
+    """
+    nx, ny, nz = stock.grid_shape
+    material = np.full((nz, ny, nx), 255, dtype=np.uint8)
+
+    if stock.shape == StockShape.ROUND:
+        cx, cy = stock.bbox.xy_center()
+        origin = stock.bbox.origin()
+        xs = origin[0] + (np.arange(nx, dtype="f4") + 0.5) * stock.voxel_size
+        ys = origin[1] + (np.arange(ny, dtype="f4") + 0.5) * stock.voxel_size
+        dx = xs - cx
+        dy = ys - cy
+        r2 = dx[np.newaxis, :] ** 2 + dy[:, np.newaxis] ** 2
+        outside = r2 > (stock.round_radius_mm ** 2)
+        material[:, outside] = 0
+
+    return material
+
+
 class GpuVoxelGrid:
     """
     Manages the voxel material field on CPU (numpy) and GPU (Texture3D).
@@ -70,9 +96,8 @@ class GpuVoxelGrid:
 
         # ── CPU material array ────────────────────────────────────────────────
         # Layout: _material[iz, iy, ix]  →  255 = workpiece, 0 = air
-        self._material: np.ndarray = np.empty((nz, ny, nx), dtype=np.uint8)
-
-        # Populate with the correct shape (fills _material in-place)
+        # _init_material() builds and assigns it (via solid_material()).
+        self._material: np.ndarray
         self._init_material()
 
         # ── GPU Texture3D (r8 — unsigned normalised, sampled as 0…1) ─────────
@@ -95,42 +120,9 @@ class GpuVoxelGrid:
     # ── Initialisation helpers ────────────────────────────────────────────────
 
     def _init_material(self) -> None:
-        """
-        Fill ``self._material`` with the correct initial stock shape.
-
-        BOUNDING_BOX → all 255 (fully solid rectangular block).
-        ROUND        → voxels inside the cylinder = 255, outside = 0.
-        """
-        self._material[:] = 255
-
-        if self._stock.shape == StockShape.ROUND:
-            cx, cy = self._bbox.xy_center()
-            self._apply_round_mask(cx, cy, self._stock.round_radius_mm)
-
-    def _apply_round_mask(self, cx: float, cy: float, radius: float) -> None:
-        """
-        Zero out all voxels whose XY centre is outside the cylinder
-        ``(cx, cy, radius)``.  The Z extent is already set by the bbox.
-        """
-        bbox   = self._bbox
-        vs     = self._voxel_size
-        nx, ny, nz = self._shape
-        origin = bbox.origin()
-
-        # World-space XY centre of each voxel column
-        xs = origin[0] + (np.arange(nx, dtype="f4") + 0.5) * vs   # (Nx,)
-        ys = origin[1] + (np.arange(ny, dtype="f4") + 0.5) * vs   # (Ny,)
-
-        # Squared distance from cylinder axis — broadcast to (Ny, Nx)
-        dx = xs - cx
-        dy = ys - cy
-        r2 = dx[np.newaxis, :] ** 2 + dy[:, np.newaxis] ** 2       # (Ny, Nx)
-
-        # Boolean mask: True where the voxel column is OUTSIDE the cylinder
-        outside = r2 > (radius * radius)                            # (Ny, Nx)
-
-        # Apply across all Z slices — _material[iz, iy, ix]
-        self._material[:, outside] = 0
+        """Fill ``self._material`` with the correct initial stock shape —
+        see the module-level solid_material() this delegates to."""
+        self._material = solid_material(self._stock)
 
     # ── Read-only properties ──────────────────────────────────────────────────
 
