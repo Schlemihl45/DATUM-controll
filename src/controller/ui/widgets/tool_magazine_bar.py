@@ -9,11 +9,21 @@ still fit at their minimum width; once there isn't room for that, the row
 switches to fixed-minimum-width slots and the bar scrolls horizontally
 instead of compressing them further — see _update_layout_mode().
 
-Per-slot visual (top to bottom): a "#N" pocket badge, a tool-type icon
-sitting on a soft elliptical shadow (_SlotVisual, hand-painted so it can
-also glow green while a drag hovers an empty slot as a valid target), and
-an elided tool name. An empty slot shows only the badge and the plain
-(unlit) shadow — no icon, no name.
+Per-slot visual (top to bottom): a "#N" pocket badge, a scaled 2D preview
+of the actual tool sitting on a soft elliptical shadow (_SlotVisual,
+hand-painted so it can also glow green while a drag hovers an empty slot
+as a valid target), and an elided tool name. An empty slot shows only the
+badge and the plain (unlit) shadow — no preview, no name.
+
+The preview is tool_profile_widget.py's real silhouette renderer (same
+metallic-gradient zone fills as ToolCardWidget's live 2D preview), rotated
+90° clockwise so the holder/spindle side sits on top and the cutting tip
+points down — how the tool actually sits in the machine — rather than the
+generic per-tool_type SVG icon this used to show. It is NOT repainted
+live: _PocketSlot caches one QPixmap per slot (see _tool_geometry_key())
+and only re-renders it when the occupying tool's own geometry actually
+changes, so scrolling/resizing the bar never re-runs the profile
+renderer.
 
 Drag & drop mechanics
 ----------------------
@@ -35,14 +45,16 @@ per explicit request — only the list is a valid "unassign" target now).
 from __future__ import annotations
 
 from PySide6.QtCore import QMimeData, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPixmap, QRadialGradient
+from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QScrollArea, QScroller, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from controller.sim.simulation.tool_definition import ToolDefinition
+from controller.sim.simulation.tool_holder import STANDARD_HOLDERS
+from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
-from controller.ui.widgets.tool_icons import tool_type_icon
+from controller.ui.widgets.tool_profile_widget import render_tool_pixmap
 
 TOOL_MIME_TYPE = "application/x-datum-tool"
 
@@ -50,31 +62,24 @@ _SLOT_MIN_WIDTH = 76
 _SLOT_MAX_WIDTH = 128
 _SLOT_HEIGHT = 108
 _VISUAL_SIZE = QSize(48, 48)
+# _SlotVisual draws its icon into exactly this rect (see paintEvent) — the
+# cached preview is rendered at this exact size so it's a clean 1:1 blit,
+# not scaled/blurred again at paint time.
+_ICON_RENDER_SIZE = QSize(
+    round(_VISUAL_SIZE.width() * 0.72), round(_VISUAL_SIZE.height() * 0.68),
+)
 
 
-class _ElidedLabel(QLabel):
-    """A QLabel that keeps its own full text and re-elides ("...") it to
-    fit whenever its width changes — plain QLabel has no such behavior,
-    and slot width is no longer fixed (see the even-distribution layout
-    above), so this can't just be computed once at set_tool() time."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._full_text = ""
-        self.setWordWrap(False)
-
-    def set_full_text(self, text: str) -> None:
-        self._full_text = text
-        self._recompute()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._recompute()
-
-    def _recompute(self) -> None:
-        fm = QFontMetrics(self.font())
-        elided = fm.elidedText(self._full_text, Qt.TextElideMode.ElideRight, self.width())
-        super().setText(elided)
+def _tool_geometry_key(tool: ToolDefinition) -> tuple:
+    """The subset of a tool's fields that actually affect its rendered 2D
+    profile — anything else (name, material, service life, ...) changing
+    must NOT invalidate a slot's cached preview pixmap; see
+    _PocketSlot.set_tool()."""
+    return (
+        tool.tool_type, tool.diameter, tool.total_length, tool.cutting_length,
+        tool.shank_diameter, tool.corner_radius, tool.tip_angle, tool.taper_angle,
+        tool.holder_preset,
+    )
 
 
 class _SlotVisual(QWidget):
@@ -134,6 +139,7 @@ class _PocketSlot(DragHoldMixin, QFrame):
         super().__init__(parent)
         self._pocket_number = pocket_number
         self._tool: ToolDefinition | None = None
+        self._preview_key: tuple | None = None   # last-rendered _tool_geometry_key()
         self._dh_init()
 
         self.setObjectName("Card")
@@ -158,7 +164,7 @@ class _PocketSlot(DragHoldMixin, QFrame):
         self._visual = _SlotVisual(self)
         root.addWidget(self._visual, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self._name_lbl = _ElidedLabel(self)
+        self._name_lbl = ElidedLabel(self)
         self._name_lbl.setObjectName("CardButtonLabel")
         self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self._name_lbl)
@@ -173,11 +179,24 @@ class _PocketSlot(DragHoldMixin, QFrame):
             self._visual.set_icon(None)
             self._name_lbl.set_full_text("")
             self.setToolTip("")
-        else:
-            self._visual.set_icon(tool_type_icon(tool.tool_type, size=32).pixmap(32, 32))
-            display = tool.name or tool.remark or f"T{tool.tool_number}"
-            self._name_lbl.set_full_text(display)
-            self.setToolTip(f"T{tool.tool_number} — {display}")
+            self._preview_key = None
+            return
+
+        # Cache hit: this exact geometry (down to holder_preset) was
+        # already rendered for this slot — e.g. an auto-save that only
+        # touched name/material/remark re-triggers set_tool() but
+        # shouldn't re-run the profile renderer. Cache miss: geometry
+        # genuinely changed (or a different tool now occupies this slot).
+        key = _tool_geometry_key(tool)
+        if key != self._preview_key:
+            holder = STANDARD_HOLDERS.get(tool.holder_preset)
+            pixmap = render_tool_pixmap(tool, holder, _ICON_RENDER_SIZE, rotate_cw=True)
+            self._visual.set_icon(pixmap)
+            self._preview_key = key
+
+        display = tool.name or tool.remark or f"T{tool.tool_number}"
+        self._name_lbl.set_full_text(display)
+        self.setToolTip(f"T{tool.tool_number} — {display}")
 
     # ── Drag source (drag the occupying tool back out) / click-to-expand ───
     # Gated by DragHoldMixin: a plain click emits tool_clicked; the drag
