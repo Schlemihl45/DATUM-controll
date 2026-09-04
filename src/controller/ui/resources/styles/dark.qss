@@ -28,6 +28,65 @@ QScrollArea > QWidget > QWidget {
     background: transparent;
 }
 
+/* Scrollbars — Qt's native ones (used by ToolListView, ToolMagazineBar,
+   and ToolCardWidget's horizontal parameter strip) are unstyled/native-
+   look by default and clash with the rest of this app; thin, transparent
+   track, no arrow buttons, a muted rounded handle that brightens on
+   hover — the common modern-minimal scrollbar pattern. */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px 2px 2px 0;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 0.18);
+    min-height: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: rgba(255, 255, 255, 0.32);
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+    width: 0;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0 2px 2px 2px;
+}
+
+QScrollBar::handle:horizontal {
+    background: rgba(255, 255, 255, 0.18);
+    min-width: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: rgba(255, 255, 255, 0.32);
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    height: 0;
+    width: 0;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
 /* --- Card (ui/widgets/card.py) --- */
 QFrame#Card {
     background: qradialgradient(

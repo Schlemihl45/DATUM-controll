@@ -26,9 +26,9 @@ from dataclasses import replace
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
-    QComboBox, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QScrollArea,
-    QScroller, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QScrollArea,
+    QScroller, QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
 from controller.persistence.tool_db import ToolDatabase
@@ -37,6 +37,7 @@ from controller.sim.simulation.tool_definition import ToolDefinition, ToolType, 
 from controller.sim.simulation.tool_holder import STANDARD_HOLDERS
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
+from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
 from controller.ui.widgets.tool_icons import tool_type_icon
 from controller.ui.widgets.tool_magazine_bar import TOOL_MIME_TYPE
@@ -148,18 +149,29 @@ class ToolCardWidget(Card):
         header_row.setSpacing(10)
 
         self._type_icon_lbl = QLabel()
-        self._type_icon_lbl.setFixedSize(24, 24)
-        header_row.addWidget(self._type_icon_lbl)
+        self._type_icon_lbl.setFixedSize(28, 28)
+        header_row.addWidget(self._type_icon_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._pocket_badge = QLabel()
         self._pocket_badge.setObjectName("PocketBadge")
         self._pocket_badge.setFixedSize(30, 22)
         self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_row.addWidget(self._pocket_badge)
+        header_row.addWidget(self._pocket_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._id_lbl = QLabel()
         self._id_lbl.setObjectName("CardButtonLabel")
-        header_row.addWidget(self._id_lbl, stretch=1)
+        header_row.addWidget(self._id_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        # Collapsed-only quick-glance info grid (Name/Length/Cutting
+        # Length/Flutes) — the "old card" 2-row label/value layout this
+        # replaces the plain title row with. Hidden again once the card
+        # is expanded (see set_expanded()): the expanded body already
+        # shows all of these as editable fields, so keeping the grid
+        # visible too would just be a redundant, non-editable copy.
+        self._info_grid_widget = self._build_collapsed_info_grid()
+        header_row.addWidget(
+            self._info_grid_widget, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter
+        )
 
         self._menu_btn = QToolButton(self._header)
         self._menu_btn.setIcon(get_icon("settings", tint=True))
@@ -180,6 +192,38 @@ class ToolCardWidget(Card):
         self.content_layout.addWidget(self._body)
 
         self.set_tool(tool)
+
+    # ── Collapsed-state info grid ───────────────────────────────────────────
+
+    def _build_collapsed_info_grid(self) -> QWidget:
+        """The "old card" 2-row label/value strip (see module docstring on
+        ToolCardWidget) — Name/Length/Cutting Length/Flutes, updated in
+        _update_header_label(), shown only while the card is collapsed."""
+        widget = QWidget()
+        grid = QGridLayout(widget)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(1)
+
+        self._info_name_val = ElidedLabel()
+        self._info_name_val.setMaximumWidth(160)
+        self._info_length_val = QLabel()
+        self._info_cutting_val = QLabel()
+        self._info_flutes_val = QLabel()
+
+        for col, (caption, value_lbl) in enumerate((
+            ("Name", self._info_name_val),
+            ("Length", self._info_length_val),
+            ("Cutting Length", self._info_cutting_val),
+            ("Flutes", self._info_flutes_val),
+        )):
+            caption_lbl = QLabel(caption)
+            caption_lbl.setObjectName("CardTitle")
+            value_lbl.setObjectName("CardButtonLabel")
+            grid.addWidget(caption_lbl, 0, col)
+            grid.addWidget(value_lbl, 1, col)
+        grid.setColumnStretch(4, 1)   # keep the four columns left-packed
+        return widget
 
     # ── Body construction ───────────────────────────────────────────────────
 
@@ -417,6 +461,11 @@ class ToolCardWidget(Card):
     def set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
         self._body.setVisible(expanded)
+        # The collapsed-only info grid is purely a quick-glance preview —
+        # the expanded body already shows the same fields as editable
+        # inputs, so keeping the grid up too would just be a redundant,
+        # read-only duplicate of what's right below it.
+        self._info_grid_widget.setVisible(not expanded)
         # Dynamic property so QSS can style an expanded card differently
         # (e.g. an accent border) — same unpolish/polish idiom
         # card_button.py's checkable state already uses.
@@ -437,7 +486,15 @@ class ToolCardWidget(Card):
         name = self._name_edit.text() or self._tool.remark or f"T{self._tool_number}"
         self._id_lbl.setText(f"T{self._tool_number}  ·  {name}")
         tt = self._type_combo.currentData() or ToolType.ENDMILL
-        self._type_icon_lbl.setPixmap(tool_type_icon(tt, size=24).pixmap(24, 24))
+        self._type_icon_lbl.setPixmap(tool_type_icon(tt, size=28).pixmap(28, 28))
+
+        # Collapsed-state info grid — live values straight off the form
+        # widgets (not self._tool) so it reflects unsaved edits too, same
+        # as the rest of this method already does for name/pocket.
+        self._info_name_val.set_full_text(name)
+        self._info_length_val.setText(f"{self._total_len_spin.value():.1f} mm")
+        self._info_cutting_val.setText(f"{self._cutting_length_spin.value():.1f} mm")
+        self._info_flutes_val.setText(str(self._flute_count_spin.value()))
 
     def _collect_form_into(self, base: ToolDefinition) -> ToolDefinition:
         # pocket, cutting_speed, feed_rate, flute_length, clearance_angle

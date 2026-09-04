@@ -33,8 +33,9 @@ def _sort_value(tool: ToolDefinition, key: str):
     if key == "tool_number":
         return tool.tool_number
     if key == "pocket":
-        p = float('inf') if tool.pocket == -1 else tool.pocket
-        return (p, tool.tool_number)
+        # Assigned pockets first, ascending (1, 2, 3, ...); unassigned
+        # (-1) tools sorted after all of them, not before.
+        return (tool.pocket == UNASSIGNED_POCKET, tool.pocket)
     return (tool.name or tool.remark or "").lower()
 
 
