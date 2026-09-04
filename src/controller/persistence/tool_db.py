@@ -115,13 +115,21 @@ CREATE TABLE IF NOT EXISTS tool_holders (
 # First-run seed data — the app's original 6 sample tools (formerly
 # MOCK_TOOL_TABLE in tool_database.py; that module is now a thin wrapper
 # around this one, so the seed data lives here where it's actually used).
+# holder_preset values below were remapped during a merge (see git log) —
+# tool_holder.py's STANDARD_HOLDERS catalog was cut down to just "ER16"
+# and "SK30-Er25" (removing ER20/ER25/ER32/SK30/SK40/BT30/BT40), which
+# left these seed rows pointing at presets that no longer exist. Mapped
+# the smaller-collet references (ER20) to the surviving "ER16" and the
+# rest (ER25/ER32) to "SK30-Er25", the one surviving larger holder — a
+# reasonable but unverified guess; adjust per-tool via the tool card's
+# Holder dropdown if it doesn't match the real fixtures.
 _SEED_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
-        tool_number=1, pocket=1, diameter=10.0, z_offset=0.0,
-        remark="10mm Schaftfräser 4-Schneider", tool_type=ToolType.ENDMILL,
-        flute_length=22.0, cutting_length=22.0, shank_diameter=10.0,
-        total_length=72.0, manufacturer="Sandvik", material="VHM",
-        service_life_min=120.0, holder_preset="ER32",
+        tool_number=1, pocket=1, diameter=6.0, z_offset=0.0,
+        remark="6mm Schaftfräser 4-Schneider", tool_type=ToolType.ENDMILL,
+        flute_length=1.0, cutting_length=1.0, shank_diameter=10.0,
+        total_length=25.0, manufacturer="Sandvik", material="VHM",
+        service_life_min=120.0, holder_preset="SK30-Er25",
         name="10mm Schaftfräser", flute_count=4,
     ),
     ToolDefinition(
@@ -129,7 +137,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         remark="6mm Kugelfräser", tool_type=ToolType.BALL_ENDMILL,
         flute_length=15.0, cutting_length=15.0, shank_diameter=6.0,
         total_length=60.0, manufacturer="Sandvik", material="VHM",
-        service_life_min=90.0, holder_preset="ER20",
+        service_life_min=90.0, holder_preset="ER16",
         name="6mm Kugelfräser", flute_count=2,
     ),
     ToolDefinition(
@@ -137,7 +145,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         remark="8mm Torusfräser r=1mm", tool_type=ToolType.BULL_ENDMILL,
         flute_length=20.0, cutting_length=20.0, shank_diameter=8.0,
         total_length=65.0, corner_radius=1.0, manufacturer="Kennametal",
-        material="VHM", service_life_min=150.0, holder_preset="ER25",
+        material="VHM", service_life_min=150.0, holder_preset="SK30-Er25",
         name="8mm Torusfräser r=1mm", flute_count=4,
     ),
     ToolDefinition(
@@ -145,7 +153,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         remark="90° Gravurfräser", tool_type=ToolType.CHAMFER,
         flute_length=10.0, cutting_length=10.0, shank_diameter=8.0,
         total_length=50.0, tip_angle=90.0, manufacturer="Datron",
-        material="VHM", service_life_min=200.0, holder_preset="ER25",
+        material="VHM", service_life_min=200.0, holder_preset="SK30-Er25",
         name="90° Gravurfräser", flute_count=2,
     ),
     ToolDefinition(
@@ -153,7 +161,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         remark="8mm Spiralbohrer HSS", tool_type=ToolType.DRILL,
         flute_length=75.0, cutting_length=75.0, shank_diameter=8.0,
         total_length=115.0, tip_angle=118.0, manufacturer="Gühring",
-        material="HSS-E", service_life_min=60.0, holder_preset="ER25",
+        material="HSS-E", service_life_min=60.0, holder_preset="SK30-Er25",
         name="8mm Spiralbohrer", flute_count=2,
     ),
     ToolDefinition(
@@ -161,7 +169,7 @@ _SEED_TOOLS: list[ToolDefinition] = [
         remark="10mm Konusfräser 5°", tool_type=ToolType.TAPER,
         flute_length=18.0, cutting_length=18.0, shank_diameter=10.0,
         total_length=65.0, taper_angle=5.0, manufacturer="Datron",
-        material="VHM", service_life_min=100.0, holder_preset="ER32",
+        material="VHM", service_life_min=100.0, holder_preset="SK30-Er25",
         name="10mm Konusfräser 5°", flute_count=2,
     ),
 ]

@@ -31,8 +31,8 @@ class HolderProfile:
     Parameters
     ----------
     name :
-        Preset name, e.g. "ER32", "SK40" — primary key in the tool_holders
-        DB table and the value stored in tools.holder_preset.
+        Preset name, e.g. "ER16", "SK30-Er25" — primary key in the
+        tool_holders DB table and the value stored in tools.holder_preset.
     kind :
         Coarse category, e.g. "ER_COLLET", "SK", "BT" — informational, not
         used by the geometry/collision code (only `profile` is).
@@ -85,25 +85,10 @@ STANDARD_HOLDERS: dict[str, HolderProfile] = {
     "ER16": HolderProfile("ER16", "ER_COLLET", gauge_length=45.0, profile=[
         (0.0, 8.0), (15.0, 10.0), (18.0, 17.0), (45.0, 17.0),
     ]),
-    "ER20": HolderProfile("ER20", "ER_COLLET", gauge_length=50.0, profile=[
-        (0.0, 10.0), (18.0, 12.5), (22.0, 21.0), (50.0, 21.0),
-    ]),
-    "ER25": HolderProfile("ER25", "ER_COLLET", gauge_length=55.0, profile=[
-        (0.0, 12.0), (20.0, 14.5), (25.0, 26.0), (55.0, 26.0),
-    ]),
-    "ER32": HolderProfile("ER32", "ER_COLLET", gauge_length=65.0, profile=[
-        (0.0, 15.0), (25.0, 17.5), (30.0, 33.0), (65.0, 33.0),
-    ]),
-    "SK30": HolderProfile("SK30", "SK", gauge_length=50.0, profile=[
-        (0.0, 11.0), (35.0, 21.0), (42.0, 23.0), (46.0, 23.0), (50.0, 15.0),
-    ]),
-    "SK40": HolderProfile("SK40", "SK", gauge_length=68.0, profile=[
-        (0.0, 13.0), (48.0, 28.5), (58.0, 31.5), (63.0, 31.5), (68.0, 20.0),
-    ]),
-    "BT30": HolderProfile("BT30", "BT", gauge_length=48.5, profile=[
-        (0.0, 11.0), (33.0, 21.0), (40.0, 23.0), (44.5, 23.0), (48.5, 15.0),
-    ]),
-    "BT40": HolderProfile("BT40", "BT", gauge_length=65.5, profile=[
-        (0.0, 13.0), (46.0, 28.5), (56.0, 31.5), (61.0, 31.5), (65.5, 20.0),
+    "SK30-Er25": HolderProfile("CUSTOM_42_50", "CUSTOM", gauge_length=55.0, profile=[
+        (0.0, 21.0),
+        (35.9, 21.0),
+        (36.0, 25.0),
+        (55.0, 25.0),
     ]),
 }

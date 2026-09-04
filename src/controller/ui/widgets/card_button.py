@@ -48,10 +48,13 @@ class CardButton(Card):
             else Qt.AlignmentFlag.AlignCenter
         )
 
+
+
         self._icon_label = QLabel(self)
         self._icon_label.setObjectName("CardButtonIcon")
         self._icon_label.setFixedSize(self._icon_size)
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon_label.setScaledContents(True)
         self.content_layout.addWidget(self._icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._text_label: QLabel | None = None
