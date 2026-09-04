@@ -59,6 +59,7 @@ class ToolPage(QWidget):
         # ── Wiring ───────────────────────────────────────────────────────────
         self._list.create_tool_requested.connect(self._on_create_tool)
         self._list.tool_dropped_for_removal.connect(self._on_tool_removed_from_magazine)
+        self._list.pocket_change_requested.connect(self._on_pocket_reassigned)
         self._magazine_bar.tool_dropped.connect(self._on_pocket_reassigned)
         self._magazine_bar.tool_clicked.connect(self._list.expand_and_scroll_to)
 

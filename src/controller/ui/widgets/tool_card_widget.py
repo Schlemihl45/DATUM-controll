@@ -26,13 +26,14 @@ from dataclasses import replace
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QSizePolicy, QSpinBox,
-    QToolButton, QVBoxLayout, QWidget,
+    QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
+    QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QScrollArea,
+    QScroller, QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
 from controller.persistence.tool_db import ToolDatabase
-from controller.sim.simulation.tool_definition import ToolDefinition, ToolType
+from controller.sim.core.settings import AppSettings
+from controller.sim.simulation.tool_definition import ToolDefinition, ToolType, UNASSIGNED_POCKET
 from controller.sim.simulation.tool_holder import STANDARD_HOLDERS
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
@@ -105,6 +106,15 @@ class _CardHeader(DragHoldMixin, QWidget):
 
 class ToolCardWidget(Card):
     """One tool's list row. See module docstring."""
+
+    # tool_number, target_pocket — emitted by the header menu's "Set Pocket
+    # Number" action. Deliberately NOT written straight to ToolDatabase
+    # here: ToolPage already owns the occupant-kick-on-swap logic for
+    # pocket reassignment (see its _on_pocket_reassigned(), also driven by
+    # ToolMagazineBar's drag&drop) — re-emitting through the same handler
+    # keeps that one place as the single source of truth instead of a
+    # second, divergent implementation.
+    pocket_change_requested = Signal(int, int)
 
     def __init__(self, tool: ToolDefinition, parent: QWidget | None = None) -> None:
         super().__init__(title=None, parent=parent)
@@ -206,6 +216,13 @@ class ToolCardWidget(Card):
 
         # Lower block: parameter groups, separated by thin vertical rules,
         # left-aligned with a trailing stretch pushing everything left.
+        # Wrapped in its own non-resizable, horizontally-scrolling strip
+        # (rather than laid straight into `root`) because this row's
+        # natural minimum width (four ParamGroups' worth of columns) can
+        # easily exceed the card's/list's actual width — without this,
+        # ToolListView's own horizontal scrollbar stays off (by design,
+        # only vertical scrolling), so the excess used to simply be
+        # clipped at the card's right edge instead of reachable.
         lower = QHBoxLayout()
         lower.setSpacing(0)
 
@@ -219,9 +236,11 @@ class ToolCardWidget(Card):
         lower.addWidget(geo)
         lower.addWidget(_vline())
 
+        # flute_length was removed per explicit request — cutting_length
+        # is the only length that actually matters here; replace() in
+        # _collect_form_into() preserves whatever flute_length a tool
+        # already had in the DB, same as the drag&drop-only pocket field.
         flutes = ParamGroup("Flutes")
-        self._flute_length_spin = _mm_spin(0.0, 500.0)
-        flutes.add_field("Lf", "mm", self._flute_length_spin, "Flute Length")
         self._cutting_length_spin = _mm_spin(0.0, 500.0)
         flutes.add_field("Lc", "mm", self._cutting_length_spin, "Cutting Length")
         self._flute_count_spin = QSpinBox()
@@ -229,20 +248,22 @@ class ToolCardWidget(Card):
         self._flute_count_spin.setMaximumWidth(70)
         flutes.add_field("Z", "", self._flute_count_spin, "Flutes")
         lower.addWidget(flutes)
-        lower.addWidget(_vline())
+        self._specific_sep = _vline()
+        lower.addWidget(self._specific_sep)
 
-        # "Specific" — clearance angle is always shown (a genuine
-        # geometric relief-angle parameter, not a "Schnittdaten"/cutting-
-        # data value like the removed feed rate / cutting speed);
-        # corner radius / point angle / taper angle are dynamically shown
-        # only for the tool_type that actually uses them — see
+        # "Specific" — every field here is dynamically shown only for the
+        # tool_type that actually uses it (see
         # ToolDefinition.profile_radius_at()/profile_radius_at_array():
         # BULL_ENDMILL alone consumes corner_radius, CHAMFER and DRILL
         # both consume tip_angle, TAPER alone consumes taper_angle; every
-        # other type's profile ignores whatever value sits there.
+        # other type's profile ignores whatever value sits there). Unlike
+        # the previous version, there is no always-shown field (clearance
+        # angle/"alpha" was removed per explicit request — it wasn't
+        # self-explanatory and nothing reads it) — so for ENDMILL/
+        # BALL_ENDMILL, where none of the three apply, the whole group
+        # (and one of its two separators) is hidden rather than shown
+        # empty; see _update_type_specific_visibility().
         specific = ParamGroup("Specific")
-        self._clearance_spin = _deg_spin()
-        specific.add_field("α", "°", self._clearance_spin, "Clearance Angle")
         self._corner_r_spin = _mm_spin(0.0, 100.0)
         specific.add_field("R", "mm", self._corner_r_spin, "Corner Radius")
         self._tip_angle_spin = _deg_spin()
@@ -250,7 +271,8 @@ class ToolCardWidget(Card):
         self._taper_angle_spin = _deg_spin()
         specific.add_field("τ", "°", self._taper_angle_spin, "Taper Angle")
         lower.addWidget(specific)
-        lower.addWidget(_vline())
+        self._specific_sep2 = _vline()
+        lower.addWidget(self._specific_sep2)
         self._specific_group = specific
 
         lifecycle = ParamGroup("Lifecycle")
@@ -265,15 +287,28 @@ class ToolCardWidget(Card):
         lower.addWidget(lifecycle)
 
         lower.addStretch(1)
-        root.addLayout(lower)
+
+        lower_widget = QWidget()
+        lower_widget.setLayout(lower)
+        lower_scroll = QScrollArea()
+        lower_scroll.setWidget(lower_widget)
+        lower_scroll.setWidgetResizable(False)
+        lower_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        lower_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        lower_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        lower_scroll.setFixedHeight(lower_widget.sizeHint().height() + 18)
+        QScroller.grabGesture(
+            lower_scroll.viewport(), QScroller.ScrollerGestureType.TouchGesture
+        )
+        root.addWidget(lower_scroll)
 
         self._wire_live_preview_and_autosave()
 
     def _wire_live_preview_and_autosave(self) -> None:
         geometry_spins = (
-            self._diameter_spin, self._flute_length_spin, self._cutting_length_spin,
+            self._diameter_spin, self._cutting_length_spin,
             self._shank_dia_spin, self._total_len_spin, self._corner_r_spin,
-            self._clearance_spin, self._tip_angle_spin, self._taper_angle_spin,
+            self._tip_angle_spin, self._taper_angle_spin,
         )
         for spin in geometry_spins:
             spin.valueChanged.connect(self._push_live_profile)
@@ -299,11 +334,22 @@ class ToolCardWidget(Card):
 
     def _update_type_specific_visibility(self, *_args) -> None:
         tt = self._type_combo.currentData()
-        self._specific_group.set_field_visible(self._corner_r_spin, tt == ToolType.BULL_ENDMILL)
-        self._specific_group.set_field_visible(
-            self._tip_angle_spin, tt in (ToolType.CHAMFER, ToolType.DRILL)
-        )
-        self._specific_group.set_field_visible(self._taper_angle_spin, tt == ToolType.TAPER)
+        show_corner = tt == ToolType.BULL_ENDMILL
+        show_tip = tt in (ToolType.CHAMFER, ToolType.DRILL)
+        show_taper = tt == ToolType.TAPER
+        self._specific_group.set_field_visible(self._corner_r_spin, show_corner)
+        self._specific_group.set_field_visible(self._tip_angle_spin, show_tip)
+        self._specific_group.set_field_visible(self._taper_angle_spin, show_taper)
+        # "Specific" has no always-shown field anymore (clearance angle
+        # was removed) — for a tool_type where none of the three apply
+        # (ENDMILL, BALL_ENDMILL), hide the whole group rather than
+        # showing an empty category header. Its trailing separator hides
+        # with it so the remaining ones read as "Flutes | Lifecycle"
+        # instead of a double rule; the separator BEFORE it stays put and
+        # simply ends up doing that job.
+        has_specific = show_corner or show_tip or show_taper
+        self._specific_group.setVisible(has_specific)
+        self._specific_sep2.setVisible(has_specific)
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -326,10 +372,8 @@ class ToolCardWidget(Card):
         self._diameter_spin.setValue(tool.diameter)
         self._total_len_spin.setValue(tool.total_length)
         self._shank_dia_spin.setValue(tool.shank_diameter)
-        self._flute_length_spin.setValue(tool.flute_length)
         self._cutting_length_spin.setValue(tool.cutting_length)
         self._flute_count_spin.setValue(tool.flute_count)
-        self._clearance_spin.setValue(tool.clearance_angle)
         self._corner_r_spin.setValue(tool.corner_radius)
         self._tip_angle_spin.setValue(tool.tip_angle)
         self._taper_angle_spin.setValue(tool.taper_angle)
@@ -374,11 +418,14 @@ class ToolCardWidget(Card):
         self._type_icon_lbl.setPixmap(tool_type_icon(tt, size=24).pixmap(24, 24))
 
     def _collect_form_into(self, base: ToolDefinition) -> ToolDefinition:
-        # pocket, cutting_speed, feed_rate deliberately NOT listed here:
-        # pocket is drag&drop-only (assigned via the magazine bar, never
-        # edited in this card); cutting_speed/feed_rate were removed from
-        # this UI per explicit request. replace() preserves whatever
-        # value each already had on `base`.
+        # pocket, cutting_speed, feed_rate, flute_length, clearance_angle
+        # deliberately NOT listed here: pocket is drag&drop-only/"Set
+        # Pocket Number"-only (never a plain form field in this card);
+        # cutting_speed/feed_rate were removed from this UI per explicit
+        # request; flute_length ("no added value over cutting_length")
+        # and clearance_angle ("alpha" — unexplained, unused) were removed
+        # per explicit request too. replace() preserves whatever value
+        # each already had on `base`.
         return replace(
             base,
             name=self._name_edit.text(),
@@ -391,10 +438,8 @@ class ToolCardWidget(Card):
             diameter=self._diameter_spin.value(),
             total_length=self._total_len_spin.value(),
             shank_diameter=self._shank_dia_spin.value(),
-            flute_length=self._flute_length_spin.value(),
             cutting_length=self._cutting_length_spin.value(),
             flute_count=self._flute_count_spin.value(),
-            clearance_angle=self._clearance_spin.value(),
             corner_radius=self._corner_r_spin.value(),
             tip_angle=self._tip_angle_spin.value(),
             taper_angle=self._taper_angle_spin.value(),
@@ -418,12 +463,36 @@ class ToolCardWidget(Card):
         self._update_header_label()
 
     def _show_menu(self) -> None:
+        # Sized up (iconSize + QMenu::item padding/font, see dark.qss/
+        # light.qss) per explicit request for a more touch-friendly menu.
         menu = QMenu(self)
+        menu.setIconSize(QSize(22, 22))
         measure_action = menu.addAction(get_icon("scan-cube", tint=True), "Measure")
         measure_action.triggered.connect(self._show_measure_stub)
+        pocket_action = menu.addAction(get_icon("tools", tint=True), "Set Pocket Number")
+        pocket_action.triggered.connect(self._prompt_set_pocket)
         delete_action = menu.addAction(get_icon("delete", tint=True), "Delete")
         delete_action.triggered.connect(self._confirm_delete)
         menu.exec(self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft()))
+
+    def _prompt_set_pocket(self) -> None:
+        """Manual alternative to drag&drop for pocket assignment — asks
+        for a pocket number and re-emits it as pocket_change_requested
+        rather than writing ToolDatabase directly, so ToolPage's existing
+        occupant-kick-on-swap logic (shared with magazine drag&drop)
+        handles it uniformly. -1 unassigns, same convention as the
+        magazine bar's "drop onto the list" gesture."""
+        if self._tool is None:
+            return
+        pocket_count = AppSettings.instance().tool_pocket_count
+        current = self._tool.pocket if self._tool.pocket >= 1 else UNASSIGNED_POCKET
+        value, ok = QInputDialog.getInt(
+            self, "Set Pocket Number",
+            f"Pocket for T{self._tool_number} ({UNASSIGNED_POCKET} = unassigned):",
+            current, UNASSIGNED_POCKET, pocket_count,
+        )
+        if ok:
+            self.pocket_change_requested.emit(self._tool_number, value)
 
     def _show_measure_stub(self) -> None:
         # No tool-measurement backend/hardware hook exists anywhere in

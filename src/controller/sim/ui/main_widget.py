@@ -43,7 +43,7 @@ from controller.sim.gcode.compiler            import GCodeCompiler
 from controller.sim.simulation.player         import SimulationPlayer
 from controller.sim.simulation.tool_database  import get_tool
 from controller.sim.simulation.tool_definition import ToolDefinition
-from controller.persistence.tool_db           import ToolDatabase
+from controller.persistence.tool_db           import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db      import WorkpieceDatabase
 from controller.sim.core.settings             import AppSettings
 
@@ -208,6 +208,16 @@ class DatumSimWidget(QWidget):
         # next (re)load, since the value is baked into the already-
         # tessellated path at load time; recomputing against the same,
         # unchanged path would just waste a background pass.
+
+        # Re-apply the active tool whenever ITS row changes in the tool DB
+        # (edited on ToolPage, or reassigned to a different magazine
+        # pocket) — without this, _current_tool stays whatever was looked
+        # up at the last tool-change/load/reset, so edits made on ToolPage
+        # while a program is loaded never reach the 3D view/tool info
+        # pill until the next T-command or reload happens to re-trigger
+        # _apply_tool(). get_tool()/_apply_tool() themselves already read
+        # live from the DB — only this missing subscription was stale.
+        ToolDatabaseSignals.instance().tool_changed.connect(self._on_tool_db_changed)
 
         # ── Render tick (~30 fps) ─────────────────────────────────────────────
         self._render_timer = QTimer(self)
@@ -576,6 +586,16 @@ class DatumSimWidget(QWidget):
         if self._voxel_ctrl is not None:
             self._voxel_ctrl.update_tool(tool)
             self._voxel_ctrl.update_holder(holder)
+
+    def _on_tool_db_changed(self, tool_number: int) -> None:
+        """ToolDatabaseSignals.tool_changed — only the CURRENTLY ACTIVE
+        tool matters here (its geometry, name, holder, or magazine-pocket
+        assignment may have just changed on ToolPage); any other tool's
+        edit has nothing to refresh until it's actually selected via a
+        T-command, which already reads live (see _check_tool_change())."""
+        if self._current_tool is None or self._current_tool.tool_number != tool_number:
+            return
+        self._apply_tool(get_tool(tool_number))
 
     def _check_tool_change(self, current_line: int) -> None:
         for tc in self._tool_changes:
