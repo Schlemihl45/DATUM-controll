@@ -30,7 +30,7 @@ from controller.sim.gcode.path_buffer import PathBuffer
 from controller.sim.simulation.tool_mesh import build_tool_mesh
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.sim.simulation.tool_holder import HolderProfile
-from controller.sim.simulation.tool_database import get_tool
+from controller.sim.simulation.tool_database import get_tool_by_pocket
 
 
 # ── Render mode enums ────────────────────────────────────────────────────────
@@ -566,7 +566,7 @@ class Viewport(QOpenGLWidget):
             self._rebuild_tool_mesh(self._pending_tool)
             del self._pending_tool
         else:
-            default = get_tool(1)
+            default = get_tool_by_pocket(1)
             if default:
                 self._rebuild_tool_mesh(default)
 

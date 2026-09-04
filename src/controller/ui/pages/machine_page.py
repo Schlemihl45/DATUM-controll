@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 from controller.core.machine.controller import ErrorSeverity, MachineController, MachineError
 from controller.domain.models import Position, ProgramState
 from controller.sim.gcode.compiler import validate_tools
-from controller.sim.simulation.tool_database import get_tool
+from controller.sim.simulation.tool_database import get_tool_by_pocket
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
 from controller.ui.widgets.card_button import CardButton
@@ -344,17 +344,18 @@ class MachinePage(QWidget):
         MachineController.run_program). The 3D simulation viewer is
         independent of this and already running once a file is loaded.
 
-        Before a fresh start (not a resume-from-pause): first, every tool
-        the program calls out via a T-command must exist in the tool
-        database AND be assigned to a real magazine pocket (see
-        gcode/compiler.py's validate_tools()) — missing/unassigned tools
-        block Start outright, behind an error dialog listing them (no
-        "start anyway" — there's nothing to insert to work around it).
-        Only once that passes does the existing fast whole-program
-        collision pre-check run in the background — see
-        DatumSimWidget.presim_check_collisions(). A clean program starts
-        exactly as before with no perceptible delay; a detected collision
-        blocks Start behind a confirmation dialog instead.
+        Before a fresh start (not a resume-from-pause): first, every
+        T-address the program calls out must resolve to a tool CURRENTLY
+        SITTING IN that magazine pocket — a T-address selects a pocket
+        directly, not a ToolDefinition.tool_number identity (see
+        gcode/compiler.py's ToolChange.pocket_number docstring and
+        validate_tools()) — empty pockets block Start outright, behind an
+        error dialog listing them (no "start anyway" — there's nothing to
+        insert to work around it). Only once that passes does the existing
+        fast whole-program collision pre-check run in the background —
+        see DatumSimWidget.presim_check_collisions(). A clean program
+        starts exactly as before with no perceptible delay; a detected
+        collision blocks Start behind a confirmation dialog instead.
         """
         if self._controller.program_state == ProgramState.PAUSED:
             self._controller.resume_program()
@@ -365,7 +366,7 @@ class MachinePage(QWidget):
             self._load_example_file()
             return
 
-        tool_validation = validate_tools(self._sim.tool_changes, get_tool)
+        tool_validation = validate_tools(self._sim.tool_changes, get_tool_by_pocket)
         if not tool_validation.ok:
             self._show_missing_tools_dialog(tool_validation)
             return
@@ -375,24 +376,14 @@ class MachinePage(QWidget):
     def _show_missing_tools_dialog(self, result) -> None:
         from PySide6.QtWidgets import QMessageBox
 
-        lines = []
-        if result.missing:
-            lines.append(
-                "Nicht in der Werkzeug-Datenbank: "
-                + ", ".join(f"T{t}" for t in result.missing)
-            )
-        if result.unassigned:
-            lines.append(
-                "Keinem Magazinplatz zugewiesen: "
-                + ", ".join(f"T{t}" for t in result.unassigned)
-            )
+        pockets = ", ".join(f"T{t}" for t in result.missing)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Werkzeuge fehlen")
         box.setText(
             "Das Programm kann nicht gestartet werden — folgende "
-            "Werkzeuge müssen zuerst in der Werkzeugverwaltung angelegt "
-            "und einem Magazinplatz zugewiesen werden:\n\n" + "\n".join(lines)
+            "Magazinplätze sind leer bzw. keinem Werkzeug zugewiesen:\n\n"
+            + pockets
         )
         box.exec()
 

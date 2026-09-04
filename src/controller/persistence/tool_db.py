@@ -272,6 +272,21 @@ class ToolDatabase:
         ).fetchone()
         return _row_to_tool(row) if row is not None else None
 
+    def get_tool_by_pocket(self, pocket: int) -> ToolDefinition | None:
+        """Resolve a magazine pocket number to whichever tool currently
+        sits there — this, NOT get_tool()/tool_number, is what a G-code
+        T-address actually selects (see gcode/compiler.py's
+        ToolChange.pocket_number docstring): T<n> means "load whatever is
+        physically in pocket n", not "load the tool whose persistent
+        tool_number identity happens to be n". If (due to a data bug) more
+        than one tool somehow shares a pocket, the first match wins —
+        normal reassignment always kicks the previous occupant to
+        UNASSIGNED_POCKET first, so this shouldn't happen in practice."""
+        row = self._conn.execute(
+            "SELECT * FROM tools WHERE pocket = ?", (pocket,)
+        ).fetchone()
+        return _row_to_tool(row) if row is not None else None
+
     def all_tools(self) -> list[ToolDefinition]:
         rows = self._conn.execute(
             "SELECT * FROM tools ORDER BY tool_number"
