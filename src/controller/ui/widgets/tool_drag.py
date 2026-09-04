@@ -1,7 +1,7 @@
 """
 ui/widgets/tool_drag.py — shared press-and-hold drag gating + scaled
 drag-preview pixmap for ToolPage's two drag sources (tool_magazine_bar.py's
-_PocketSlot, tool_list_card.py's ToolListCard).
+_PocketSlot, tool_card_widget.py's _CardHeader).
 
 Both used to start QDrag.exec() unconditionally from mousePressEvent —
 meaning every plain click (no movement at all) also fired a full,
@@ -13,6 +13,15 @@ then moved past Qt's own drag-start distance. The hold delay in
 particular is what keeps a quick press-release (an ordinary click, or the
 start of an unrelated gesture over the card) from ever being
 misinterpreted as "start dragging".
+
+_dh_release() additionally reports whether the release itself was a
+genuine tap: a press followed by a release with no meaningful movement in
+between, regardless of whether the hold timer ever armed. This matters
+for a fast touch-scroll flick that starts and ends inside the hold delay
+(< 350ms) — the old code only ever checked "was there a press", so that
+flick's release still counted as a click and mis-fired an expand/collapse
+or a magazine-slot select mid-scroll. Checking the actual travelled
+distance instead fixes that regardless of gesture backend.
 """
 from __future__ import annotations
 
@@ -57,10 +66,22 @@ class DragHoldMixin:
         moved = (pos - self._dh_press_pos).manhattanLength()
         return moved >= QApplication.startDragDistance()
 
-    def _dh_release(self) -> None:
+    def _dh_release(self, pos: QPoint | None = None) -> bool:
+        """Stop tracking the current press/drag attempt. If *pos* (the
+        release position) is given, returns whether this was a genuine
+        tap — a release within Qt's own drag-start distance of the
+        original press position — regardless of whether the hold timer
+        had armed. Callers not interested in that verdict (e.g. right
+        before starting an actual drag) can omit *pos* and ignore the
+        return value."""
         self._dh_timer.stop()
         self._dh_armed = False
+        was_click = False
+        if pos is not None and self._dh_press_pos is not None:
+            moved = (pos - self._dh_press_pos).manhattanLength()
+            was_click = moved < QApplication.startDragDistance()
         self._dh_press_pos = None
+        return was_click
 
 
 def scaled_drag_pixmap(widget: QWidget, max_size: QSize = _PREVIEW_MAX_SIZE) -> QPixmap:

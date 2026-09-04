@@ -14,6 +14,17 @@ QMainWindow {
     );
 }
 
+/* "Create new tool" popup (tool_list_card.py's CreateToolDialog) — see
+   dark.qss's identical rule for why this is needed. */
+QDialog#CreateToolDialog {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 1,
+        stop: 0 #f0f4f8,
+        stop: 1 #dce4ef
+    );
+}
+
 /* Plain QScrollArea (ToolPage's ToolListView/ToolMagazineBar — the only
    two in the app) has no rule of its own anywhere below, so both its
    frame and its viewport paint Qt's default (opaque) palette background —

@@ -12,6 +12,22 @@ QMainWindow {
     );
 }
 
+/* "Create new tool" popup (tool_list_card.py's CreateToolDialog) — a
+   plain QDialog has no rule anywhere else in the app, so without one it
+   paints Qt's default (light) palette background, clashing badly with
+   the ToolCardWidget floating on top of it. Same gradient as
+   QMainWindow, scoped to this dialog only (not QMessageBox/QInputDialog
+   elsewhere, which already work fine with native chrome and aren't part
+   of this change). */
+QDialog#CreateToolDialog {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 1,
+        stop: 0 #141b26,
+        stop: 1 #0b0f16
+    );
+}
+
 /* Plain QScrollArea (ToolPage's ToolListView/ToolMagazineBar — the only
    two in the app) has no rule of its own anywhere below, so both its
    frame and its viewport paint Qt's default (opaque, light) palette

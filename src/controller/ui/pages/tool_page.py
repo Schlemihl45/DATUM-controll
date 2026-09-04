@@ -19,7 +19,7 @@ from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.sim.core.settings import AppSettings
 from controller.sim.simulation.tool_definition import ToolDefinition, UNASSIGNED_POCKET
 from controller.ui.widgets.tool_filter_bar import ToolFilterBar
-from controller.ui.widgets.tool_list_card import ToolListView
+from controller.ui.widgets.tool_list_card import ToolListView, CreateToolDialog
 from controller.ui.widgets.tool_magazine_bar import ToolMagazineBar
 
 
@@ -105,10 +105,15 @@ class ToolPage(QWidget):
 
     def _on_create_tool(self) -> None:
         """"Create new tool" card clicked: insert a fresh ToolDefinition
-        and expand its (already-reloaded, via ToolDatabaseSignals —
-        see class docstring) card for immediate editing."""
+        and open it for editing in a popup (CreateToolDialog) — the same
+        ToolCardWidget design, but NOT inserted as a row into the list
+        while being edited (see that class's docstring). Once the popup
+        closes, the now-populated tool has already auto-saved its way
+        into the list like any other row; just scroll to it."""
         tool = self._db.create_new_tool()
-        self._list.expand_and_scroll_to(tool.tool_number)
+        dialog = CreateToolDialog(tool, self)
+        dialog.exec()
+        self._list.scroll_to(tool.tool_number)
 
     def _on_tool_removed_from_magazine(self, tool_number: int) -> None:
         """A tool was dropped onto the vertical list — the one and only

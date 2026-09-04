@@ -73,13 +73,19 @@ class _AutoSaveTextEdit(QPlainTextEdit):
 
 
 class _CardHeader(DragHoldMixin, QWidget):
-    """Always-visible row. A plain click (press+release, no drag ever
-    started) emits clicked — ToolCardWidget toggles expand/collapse on
-    it. A press-and-hold-then-move starts a drag of this tool into a
+    """Always-visible row. A genuine tap (press+release with no
+    meaningful movement in between — see DragHoldMixin._dh_release(),
+    which is what actually distinguishes this from the tail end of a
+    scroll flick) emits clicked — ToolCardWidget toggles expand/collapse
+    on it. A press-and-hold-then-move starts a drag of this tool into a
     magazine pocket, via the same TOOL_MIME_TYPE tool_magazine_bar.py's
-    pocket slots accept."""
+    pocket slots accept; drag_started/drag_finished bracket that (see
+    ToolListView.set_scroll_enabled()) so the list's own touch-scroll
+    doesn't fight the drag gesture while one is in flight."""
 
     clicked = Signal()
+    drag_started = Signal()
+    drag_finished = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -103,8 +109,7 @@ class _CardHeader(DragHoldMixin, QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
-        was_click = self._dh_press_pos is not None
-        self._dh_release()
+        was_click = self._dh_release(event.position().toPoint())
         if was_click and event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
@@ -115,7 +120,11 @@ class _CardHeader(DragHoldMixin, QWidget):
         mime.setData(TOOL_MIME_TYPE, str(self._tool_number).encode("utf-8"))
         drag.setMimeData(mime)
         drag.setPixmap(scaled_drag_pixmap(self))
-        drag.exec(Qt.DropAction.MoveAction)
+        self.drag_started.emit()
+        try:
+            drag.exec(Qt.DropAction.MoveAction)
+        finally:
+            self.drag_finished.emit()
 
 
 class ToolCardWidget(Card):
@@ -129,6 +138,17 @@ class ToolCardWidget(Card):
     # keeps that one place as the single source of truth instead of a
     # second, divergent implementation.
     pocket_change_requested = Signal(int, int)
+
+    # Emitted whenever set_expanded() actually changes this card's state
+    # — ToolListView listens to implement the "only one card open at a
+    # time" accordion (see its _on_card_expanded_changed()).
+    expanded_changed = Signal(bool)
+
+    # Re-exported from _CardHeader — ToolListView listens to temporarily
+    # suspend the list's own touch-scroll while a card is mid-drag (see
+    # its set_scroll_enabled()), so the two gestures don't interfere.
+    drag_started = Signal()
+    drag_finished = Signal()
 
     def __init__(self, tool: ToolDefinition, parent: QWidget | None = None) -> None:
         super().__init__(title=None, parent=parent)
@@ -145,6 +165,8 @@ class ToolCardWidget(Card):
         self._header.setMinimumHeight(96)
         self._header.set_tool_number(tool.tool_number)
         self._header.clicked.connect(self.toggle_expanded)
+        self._header.drag_started.connect(self.drag_started)
+        self._header.drag_finished.connect(self.drag_finished)
         header_row = QHBoxLayout(self._header)
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(10)
@@ -451,6 +473,13 @@ class ToolCardWidget(Card):
         self.set_expanded(not self._expanded)
 
     def set_expanded(self, expanded: bool) -> None:
+        if expanded == self._expanded:
+            # No-op guard: expand_and_scroll_to()/accordion collapse can
+            # both call this redundantly (e.g. clicking the same magazine
+            # slot twice, or the accordion collapsing a card that's
+            # already collapsed) — skip the polish cycle and, more
+            # importantly, don't re-emit expanded_changed for nothing.
+            return
         self._expanded = expanded
         self._body.setVisible(expanded)
         # Dynamic property so QSS can style an expanded card differently
@@ -459,6 +488,7 @@ class ToolCardWidget(Card):
         self.setProperty("expanded", expanded)
         self.style().unpolish(self)
         self.style().polish(self)
+        self.expanded_changed.emit(expanded)
 
     def is_expanded(self) -> bool:
         return self._expanded
