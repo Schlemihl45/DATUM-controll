@@ -178,10 +178,10 @@ def _paint_profile(
         painter.setBrush(_zone_gradient(top, bottom, color))
         painter.drawPath(zone_path(pts))
 
-    # Faint centreline for orientation (horizontal — unrelated to the
+    """# Faint centreline for orientation (horizontal — unrelated to the
     # vertical seam artifacts the per-zone paths above eliminate).
     painter.setPen(QPen(QColor(255, 255, 255, 40), 1, Qt.PenStyle.DashLine))
-    painter.drawLine(QPointF(_MARGIN_X, cy), QPointF(w - _MARGIN_X, cy))
+    painter.drawLine(QPointF(_MARGIN_X, cy), QPointF(w - _MARGIN_X, cy))"""
 
 
 def render_tool_pixmap(

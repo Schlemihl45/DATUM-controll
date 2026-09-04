@@ -45,7 +45,7 @@ class _CreateToolCard(CardButton):
         )
         self.setProperty("variant", "create_tool")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setMinimumHeight(72)
+        self.setMinimumHeight(64)
 
 
 class _ListContainer(QWidget):

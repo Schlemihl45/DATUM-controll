@@ -9,21 +9,16 @@ still fit at their minimum width; once there isn't room for that, the row
 switches to fixed-minimum-width slots and the bar scrolls horizontally
 instead of compressing them further — see _update_layout_mode().
 
-Per-slot visual (top to bottom): a "#N" pocket badge, a scaled 2D preview
-of the actual tool sitting on a soft elliptical shadow (_SlotVisual,
-hand-painted so it can also glow green while a drag hovers an empty slot
-as a valid target), and an elided tool name. An empty slot shows only the
-badge and the plain (unlit) shadow — no preview, no name.
+Per-slot visual (top to bottom): a scaled 2D preview of the actual tool
+and a "#N" pocket badge. An empty slot shows only the badge.
 
 The preview is tool_profile_widget.py's real silhouette renderer (same
 metallic-gradient zone fills as ToolCardWidget's live 2D preview), rotated
 90° clockwise so the holder/spindle side sits on top and the cutting tip
-points down — how the tool actually sits in the machine — rather than the
-generic per-tool_type SVG icon this used to show. It is NOT repainted
+points down — how the tool actually sits in the machine. It is NOT repainted
 live: _PocketSlot caches one QPixmap per slot (see _tool_geometry_key())
 and only re-renders it when the occupying tool's own geometry actually
-changes, so scrolling/resizing the bar never re-runs the profile
-renderer.
+changes, so scrolling/resizing the bar never re-runs the profile renderer.
 
 Drag & drop mechanics
 ----------------------
@@ -36,23 +31,18 @@ A tool is emptied from its pocket (pocket -> UNASSIGNED_POCKET) in
 exactly ONE place: an explicit drop onto the vertical tool list (see
 tool_list_card.py's _ListContainer). Dropping a pocket's tool anywhere
 else that doesn't accept it (another window, empty space, ...) is simply
-rejected — the tool stays in its pocket, and Qt's own drag-rejection
-animation is what makes the dragged preview visually "spring back" to
-its origin; there is deliberately no code-level fallback that empties the
-pocket for an unrecognized drop target (there used to be one; removed
-per explicit request — only the list is a valid "unassign" target now).
+rejected.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import QMimeData, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap, QRadialGradient
+from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QScrollArea, QScroller, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.sim.simulation.tool_holder import STANDARD_HOLDERS
-from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
 from controller.ui.widgets.tool_profile_widget import render_tool_pixmap
 
@@ -60,16 +50,10 @@ TOOL_MIME_TYPE = "application/x-datum-tool"
 
 _SLOT_MIN_WIDTH = 76
 _SLOT_MAX_WIDTH = 128
-_SLOT_HEIGHT = 124
-_VISUAL_SIZE = QSize(96, 96)
-# _SlotVisual draws its icon into exactly this rect (see paintEvent) — the
-# cached preview is rendered at this exact size so it's a clean 1:1 blit,
-# not scaled/blurred again at paint time. (Lost in an earlier merge —
-# _VISUAL_SIZE changed from 48x48 to 96x96 there but this derived
-# constant's definition got dropped while its one use site survived,
-# leaving a NameError.)
+_SLOT_HEIGHT = 196
+_VISUAL_SIZE = QSize(96, 256)
 _ICON_RENDER_SIZE = QSize(
-    round(_VISUAL_SIZE.width() * 0.72), round(_VISUAL_SIZE.height() * 0.68),
+    round(_VISUAL_SIZE.width()), round(_VISUAL_SIZE.height()),
 )
 
 
@@ -86,10 +70,8 @@ def _tool_geometry_key(tool: ToolDefinition) -> tuple:
 
 
 class _SlotVisual(QWidget):
-    """Tool-type icon over a soft, hand-painted elliptical shadow — drawn
-    manually (rather than a static asset) so the shadow can switch to a
-    subtle green glow while a drag is hovering this slot as a valid
-    (empty) drop target."""
+    """Tool-type icon visual. Shows a subtle highlight while a drag is
+    hovering this slot as a valid (empty) drop target."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -111,21 +93,15 @@ class _SlotVisual(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         w, h = self.width(), self.height()
-        ellipse = QRectF(w * 0.08, h * 0.70, w * 0.84, h * 0.24)
-        radius = max(ellipse.width(), ellipse.height()) / 2
-        gradient = QRadialGradient(ellipse.center(), radius)
+
         if self._hover:
-            gradient.setColorAt(0.0, QColor(90, 200, 130, 170))
-            gradient.setColorAt(1.0, QColor(90, 200, 130, 0))
-        else:
-            gradient.setColorAt(0.0, QColor(0, 0, 0, 100))
-            gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(gradient)
-        painter.drawEllipse(ellipse)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(90, 200, 130, 40))
+            painter.drawRoundedRect(self.rect(), 8, 8)
 
         if self._icon is not None:
-            icon_rect = QRectF(w * 0.14, 0, w * 0.72, h * 0.68).toRect()
+            # Etwas zentrierter, da der Schatten darunter wegfällt
+            icon_rect = QRectF(w * 0.14, h * 0.05, w * 0.72, h * 0.85).toRect()
             painter.drawPixmap(icon_rect, self._icon)
 
 
@@ -142,7 +118,7 @@ class _PocketSlot(DragHoldMixin, QFrame):
         super().__init__(parent)
         self._pocket_number = pocket_number
         self._tool: ToolDefinition | None = None
-        self._preview_key: tuple | None = None   # last-rendered _tool_geometry_key()
+        self._preview_key: tuple | None = None
         self._dh_init()
 
         self.setObjectName("Card")
@@ -159,14 +135,8 @@ class _PocketSlot(DragHoldMixin, QFrame):
         root.setSpacing(3)
         root.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-
         self._visual = _SlotVisual(self)
         root.addWidget(self._visual, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self._name_lbl = ElidedLabel(self)
-        self._name_lbl.setObjectName("CardButtonLabel")
-        self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._name_lbl)
 
         self._badge_lbl = QLabel(f"#{pocket_number}")
         self._badge_lbl.setObjectName("PocketBadge")
@@ -182,16 +152,10 @@ class _PocketSlot(DragHoldMixin, QFrame):
         self._tool = tool
         if tool is None:
             self._visual.set_icon(None)
-            self._name_lbl.set_full_text("")
             self.setToolTip("")
             self._preview_key = None
             return
 
-        # Cache hit: this exact geometry (down to holder_preset) was
-        # already rendered for this slot — e.g. an auto-save that only
-        # touched name/material/remark re-triggers set_tool() but
-        # shouldn't re-run the profile renderer. Cache miss: geometry
-        # genuinely changed (or a different tool now occupies this slot).
         key = _tool_geometry_key(tool)
         if key != self._preview_key:
             holder = STANDARD_HOLDERS.get(tool.holder_preset)
@@ -200,7 +164,6 @@ class _PocketSlot(DragHoldMixin, QFrame):
             self._preview_key = key
 
         display = tool.name or tool.remark or f"T{tool.tool_number}"
-        self._name_lbl.set_full_text(display)
         self.setToolTip(f"T{tool.tool_number} — {display}")
 
     # ── Drag source (drag the occupying tool back out) / click-to-expand ───

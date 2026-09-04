@@ -86,9 +86,12 @@ STANDARD_HOLDERS: dict[str, HolderProfile] = {
         (0.0, 8.0), (15.0, 10.0), (18.0, 17.0), (45.0, 17.0),
     ]),
     "SK30-Er25": HolderProfile("CUSTOM_42_50", "CUSTOM", gauge_length=55.0, profile=[
-        (0.0, 21.0),
-        (35.9, 21.0),
-        (36.0, 25.0),
-        (55.0, 25.0),
-    ]),
+    (0.0, 18.0),   # Start bei Z=0.0 mit Radius 21 (D42)
+        (2, 21),
+    (20.0, 21.0),  # Hält den Radius 21 bis Z=20.0 (L20)
+    (20.0, 16.0),  # Sprung im Radius runter auf 16 (D32) bei Z=20.0
+    (35.9, 16.0),  # Hält den Radius 16 bis Z=35.9 (L35,9)
+    (35.9, 25.0),  # Sprung im Radius hoch auf 25 (D50) bei Z=35.9
+    (55.0, 25.0),  # Hält den Radius 25 bis zum Ende bei Z=55.0 (L55)
+]),
 }

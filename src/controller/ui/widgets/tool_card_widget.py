@@ -48,10 +48,10 @@ _NO_HOLDER = "No Holder defined"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 DEFAULT_DIAMETER       = 8.0
-DEFAULT_TOTAL_LEN      = 60.0
+DEFAULT_TOTAL_LEN      = 25.0
 DEFAULT_SHANK_DIA      = 8.0
-DEFAULT_CUTTING_LEN    = 22.0
-DEFAULT_FLUTE_COUNT    = 4
+DEFAULT_CUTTING_LEN    = 18.0
+DEFAULT_FLUTE_COUNT    = 2
 DEFAULT_CORNER_RADIUS  = 0.0
 DEFAULT_TIP_ANGLE      = 118.0
 DEFAULT_TAPER_ANGLE    = 0.0
@@ -142,6 +142,7 @@ class ToolCardWidget(Card):
 
         # ── Header ───────────────────────────────────────────────────────────
         self._header = _CardHeader(self)
+        self._header.setMinimumHeight(96)
         self._header.set_tool_number(tool.tool_number)
         self._header.clicked.connect(self.toggle_expanded)
         header_row = QHBoxLayout(self._header)
@@ -149,7 +150,7 @@ class ToolCardWidget(Card):
         header_row.setSpacing(10)
 
         self._type_icon_lbl = QLabel()
-        self._type_icon_lbl.setFixedSize(28, 28)
+        self._type_icon_lbl.setFixedSize(64, 64)
         header_row.addWidget(self._type_icon_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._pocket_badge = QLabel()
@@ -158,16 +159,8 @@ class ToolCardWidget(Card):
         self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_row.addWidget(self._pocket_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        self._id_lbl = QLabel()
-        self._id_lbl.setObjectName("CardButtonLabel")
-        header_row.addWidget(self._id_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        # Collapsed-only quick-glance info grid (Name/Length/Cutting
-        # Length/Flutes) — the "old card" 2-row label/value layout this
-        # replaces the plain title row with. Hidden again once the card
-        # is expanded (see set_expanded()): the expanded body already
-        # shows all of these as editable fields, so keeping the grid
-        # visible too would just be a redundant, non-editable copy.
+        # Info grid (Name/Length/Cutting Length/Flutes)
+        # Keeps showing even when expanded now, maintaining the visual header structure.
         self._info_grid_widget = self._build_collapsed_info_grid()
         header_row.addWidget(
             self._info_grid_widget, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter
@@ -196,9 +189,8 @@ class ToolCardWidget(Card):
     # ── Collapsed-state info grid ───────────────────────────────────────────
 
     def _build_collapsed_info_grid(self) -> QWidget:
-        """The "old card" 2-row label/value strip (see module docstring on
-        ToolCardWidget) — Name/Length/Cutting Length/Flutes, updated in
-        _update_header_label(), shown only while the card is collapsed."""
+        """The 2-row label/value strip (Name/Length/Cutting Length/Flutes),
+        updated in _update_header_label(). Stays visible even when expanded."""
         widget = QWidget()
         grid = QGridLayout(widget)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -461,11 +453,6 @@ class ToolCardWidget(Card):
     def set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
         self._body.setVisible(expanded)
-        # The collapsed-only info grid is purely a quick-glance preview —
-        # the expanded body already shows the same fields as editable
-        # inputs, so keeping the grid up too would just be a redundant,
-        # read-only duplicate of what's right below it.
-        self._info_grid_widget.setVisible(not expanded)
         # Dynamic property so QSS can style an expanded card differently
         # (e.g. an accent border) — same unpolish/polish idiom
         # card_button.py's checkable state already uses.
@@ -483,8 +470,7 @@ class ToolCardWidget(Card):
             return
         pocket = self._tool.pocket
         self._pocket_badge.setText(str(pocket) if pocket >= 1 else "-")
-        name = self._name_edit.text() or self._tool.remark or f"T{self._tool_number}"
-        self._id_lbl.setText(f"T{self._tool_number}  ·  {name}")
+        name = self._name_edit.text() or self._tool.remark or f"Unbenannt"
         tt = self._type_combo.currentData() or ToolType.ENDMILL
         self._type_icon_lbl.setPixmap(tool_type_icon(tt, size=28).pixmap(28, 28))
 
@@ -495,7 +481,7 @@ class ToolCardWidget(Card):
         # QSpinBox — parse via the same helpers _collect_form_into() uses,
         # so an in-progress/invalid edit falls back to the same default
         # rather than showing garbage.
-        self._info_name_val.set_full_text(name)
+        self._info_name_val.set_full_text(f"T{self._tool_number}  ·  {name}")
         length = _parse_float(self._total_len_edit.text(), DEFAULT_TOTAL_LEN)
         self._info_length_val.setText(f"{length:.1f} mm")
         cutting = _parse_float(self._cutting_length_edit.text(), DEFAULT_CUTTING_LEN)
