@@ -41,7 +41,7 @@ from controller.sim.ui.overlay.settings_panel import SettingsPanel
 from controller.sim.ui.overlay.control_hub    import ControlHub
 from controller.sim.gcode.compiler            import GCodeCompiler
 from controller.sim.simulation.player         import SimulationPlayer
-from controller.sim.simulation.tool_database  import get_tool
+from controller.sim.simulation.tool_database  import get_tool, get_tool_by_pocket
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.persistence.tool_db           import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db      import WorkpieceDatabase
@@ -346,7 +346,8 @@ class DatumSimWidget(QWidget):
 
         tool_changes = program.tool_changes
         initial_tool = (
-            get_tool(tool_changes[0].tool_number) if tool_changes else get_tool(1)
+            get_tool_by_pocket(tool_changes[0].pocket_number) if tool_changes
+            else get_tool_by_pocket(1)
         )
         db = ToolDatabase.instance()
 
@@ -357,7 +358,7 @@ class DatumSimWidget(QWidget):
         def _worker() -> None:
             result = run_prepass(
                 path, tool_changes, initial_tool, stock,
-                get_tool=get_tool, get_holder=db.get_holder, abort=my_abort,
+                get_tool_by_pocket=get_tool_by_pocket, get_holder=db.get_holder, abort=my_abort,
             )
             if not my_abort.is_set():
                 self._prepass_done.emit(gen, result)
@@ -439,7 +440,7 @@ class DatumSimWidget(QWidget):
             grid  = GpuVoxelGrid(self.viewport.ctx, stock)
             carver = VoxelCarver(grid)
 
-            active_tool = self._current_tool or get_tool(1)
+            active_tool = self._current_tool or get_tool_by_pocket(1)
             self._voxel_ctrl = VoxelSimController(
                 grid             = grid,
                 carver           = carver,
@@ -592,7 +593,11 @@ class DatumSimWidget(QWidget):
         tool matters here (its geometry, name, holder, or magazine-pocket
         assignment may have just changed on ToolPage); any other tool's
         edit has nothing to refresh until it's actually selected via a
-        T-command, which already reads live (see _check_tool_change())."""
+        T-command, which already reads live (see _check_tool_change()).
+        Deliberately get_tool(tool_number), NOT get_tool_by_pocket(): this
+        re-fetches the SAME already-selected ToolDefinition by its own
+        identity to pick up whatever changed on it (its pocket included)
+        — it is not re-resolving a T-address."""
         if self._current_tool is None or self._current_tool.tool_number != tool_number:
             return
         self._apply_tool(get_tool(tool_number))
@@ -601,7 +606,7 @@ class DatumSimWidget(QWidget):
         for tc in self._tool_changes:
             if tc.line_index <= current_line and tc.line_index > self._last_tool_change_idx:
                 self._last_tool_change_idx = tc.line_index
-                self._apply_tool(get_tool(tc.tool_number))
+                self._apply_tool(get_tool_by_pocket(tc.pocket_number))
 
     def _apply_initial_tool(self) -> None:
         """Apply the program's first tool and reset tool-change tracking.
@@ -614,8 +619,8 @@ class DatumSimWidget(QWidget):
         if self._last_program is None:
             return
         first_tool = (
-            get_tool(self._last_program.tool_changes[0].tool_number)
-            if self._last_program.tool_changes else get_tool(1)
+            get_tool_by_pocket(self._last_program.tool_changes[0].pocket_number)
+            if self._last_program.tool_changes else get_tool_by_pocket(1)
         )
         self._apply_tool(first_tool)
 

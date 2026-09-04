@@ -463,10 +463,11 @@ class ToolCardWidget(Card):
         self._update_header_label()
 
     def _show_menu(self) -> None:
-        # Sized up (iconSize + QMenu::item padding/font, see dark.qss/
-        # light.qss) per explicit request for a more touch-friendly menu.
+        # Sized up (padding/font + icon-size, see dark.qss/light.qss's
+        # QMenu rule) per explicit request for a more touch-friendly menu.
+        # QMenu has no setIconSize() method (that's QToolBar/QListView) —
+        # the "icon-size" QSS property is the correct way to size it.
         menu = QMenu(self)
-        menu.setIconSize(QSize(22, 22))
         measure_action = menu.addAction(get_icon("scan-cube", tint=True), "Measure")
         measure_action.triggered.connect(self._show_measure_stub)
         pocket_action = menu.addAction(get_icon("tools", tint=True), "Set Pocket Number")

@@ -94,16 +94,20 @@ def run_prepass(
     tool_changes: list[ToolChange],
     initial_tool: ToolDefinition,
     stock:        StockDefinition,
-    get_tool,
+    get_tool_by_pocket,
     get_holder,
     abort:        threading.Event | None = None,
 ) -> CollisionPrepassResult | None:
     """Scan the whole *path* for collisions against a fresh scratch stock.
 
     Parameters mirror what DatumSimWidget already has on hand when a
-    program is loaded — *get_tool*/*get_holder* are callables (ToolDatabase
-    lookups) rather than a bound ToolDatabase instance so this stays
-    trivially testable with fakes.
+    program is loaded — *get_tool_by_pocket*/*get_holder* are callables
+    (ToolDatabase lookups) rather than a bound ToolDatabase instance so
+    this stays trivially testable with fakes. get_tool_by_pocket, NOT a
+    tool_number lookup: each ToolChange.pocket_number is a G-code
+    T-address, which selects a magazine pocket directly (see
+    gcode/compiler.py's ToolChange docstring) — the caller
+    (DatumSimWidget._start_prepass()) passes tool_database.get_tool_by_pocket.
 
     Returns None if *abort* is set before the scan completes (the caller
     started a newer pre-pass and this one's result no longer applies — see
@@ -131,7 +135,7 @@ def run_prepass(
             tc_idx < len(tool_changes)
             and tool_changes[tc_idx].line_index <= line_ids[i]
         ):
-            current_tool = get_tool(tool_changes[tc_idx].tool_number) or current_tool
+            current_tool = get_tool_by_pocket(tool_changes[tc_idx].pocket_number) or current_tool
             current_holder = get_holder(current_tool.holder_preset) if current_tool else None
             tc_idx += 1
         if current_tool is None:

@@ -1,24 +1,30 @@
 """sim/gcode/compiler.py — GCodeCompiler: load a .nc/.cnc file → GCodeProgram."""
 
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import numpy as np
 from controller.sim.gcode.lexer          import tokenize
 from controller.sim.gcode.parser import parse, GCodeCommand
 from controller.sim.gcode.motion_planner import plan, MotionSegment
 from controller.sim.gcode.path_buffer    import PathBuffer
-from controller.sim.simulation.tool_database import get_tool
+from controller.sim.simulation.tool_database import get_tool_by_pocket
 
 @dataclass
 class ToolChange:
     line_index: int
-    tool_number: int
+    # The raw value after "T" in the G-code (e.g. "T3" -> 3). On this
+    # machine a T-address selects a MAGAZINE POCKET directly — "load
+    # whatever tool is currently sitting in pocket <n>" — not a
+    # ToolDefinition.tool_number identity; resolve it with
+    # tool_database.get_tool_by_pocket(), never get_tool(). Named
+    # pocket_number (not tool_number) specifically so that confusion
+    # can't recur silently at a call site.
+    pocket_number: int
 
 @dataclass
 class ToolValidationResult:
     missing: list[int]
     found: list[int]
-    unassigned: list[int] = field(default_factory=list)
     ok: bool = False
 
     def __str__(self) -> str:
@@ -26,38 +32,34 @@ class ToolValidationResult:
             return "OK"
         lines = [f"Warning: "]
         for t in self.missing:
-            lines.append(f"T{t} - not found")
-        for t in self.unassigned:
-            lines.append(f"T{t} - not assigned to a magazine pocket")
+            lines.append(f"T{t} - no tool assigned to that magazine pocket")
         return "\n".join(lines)
 
-def validate_tools(tool_changes: list[ToolChange], get_tool) -> ToolValidationResult:
-    """Every distinct T-number the program calls out (in first-seen
-    order) is checked twice: does it exist in the tool database at all
-    (-> missing), and if so, is it currently assigned to a real magazine
-    pocket (tool.pocket >= 1 -> otherwise unassigned)? Both are required
-    for `ok` — MachinePage's pre-start check (see machine_page.py's
-    _on_start_clicked()) blocks Start on either."""
-    missing, found, unassigned = [], [], []
+def validate_tools(tool_changes: list[ToolChange], get_tool_by_pocket) -> ToolValidationResult:
+    """Every distinct T-address (== magazine pocket, see ToolChange's
+    docstring) the program calls out is checked: is ANY tool currently
+    assigned to that pocket? Pocket-based resolution collapses what used
+    to be two separate failure modes ("tool_number doesn't exist" /
+    "exists but pocket < 1") into this one, since a T-address that
+    doesn't resolve via pocket is unusable regardless of whether some
+    ToolDefinition elsewhere happens to share that same number as its
+    identity — MachinePage's pre-start check (see machine_page.py's
+    _on_start_clicked()) blocks Start on any entry in `missing`."""
+    missing, found = [], []
     seen = set()
 
     for tc in tool_changes:
-        if tc.tool_number in seen:
+        if tc.pocket_number in seen:
             continue
-        seen.add(tc.tool_number)
+        seen.add(tc.pocket_number)
 
-        tool = get_tool(tc.tool_number)
+        tool = get_tool_by_pocket(tc.pocket_number)
         if tool is None:
-            missing.append(tc.tool_number)
+            missing.append(tc.pocket_number)
         else:
-            found.append(tc.tool_number)
-            if tool.pocket < 1:
-                unassigned.append(tc.tool_number)
+            found.append(tc.pocket_number)
 
-    return ToolValidationResult(
-        missing=missing, found=found, unassigned=unassigned,
-        ok=not missing and not unassigned,
-    )
+    return ToolValidationResult(missing=missing, found=found, ok=not missing)
 
 
 @dataclass
@@ -78,7 +80,7 @@ def _extract_tool_changes(commands: list[GCodeCommand]) -> list[ToolChange]:
         if 6 in cmd.m_codes and pending_tool is not None:
             changes.append(ToolChange(
                 line_index=cmd.line_index,
-                tool_number=pending_tool,
+                pocket_number=pending_tool,
             ))
     return changes
 
@@ -113,7 +115,7 @@ class GCodeCompiler:
         segments = plan(commands, start_position=start_position)
         buf = PathBuffer(segments, start_position=start_position)
         tool_changes = _extract_tool_changes(commands)
-        tool_validation = validate_tools(tool_changes, get_tool)
+        tool_validation = validate_tools(tool_changes, get_tool_by_pocket)
 
         if not tool_validation.ok:
             print(f"[Compiler] ⚠  {path}")
