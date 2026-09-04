@@ -25,7 +25,9 @@ by a reload triggered by some OTHER field's save.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication, QLabel, QScrollArea, QScroller, QSizePolicy, QVBoxLayout, QWidget,
+)
 
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.ui.icon_loader import get_icon
@@ -77,11 +79,18 @@ class ToolListView(QScrollArea):
 
     create_tool_requested = Signal()
     tool_dropped_for_removal = Signal(int)   # tool_number
+    pocket_change_requested = Signal(int, int)   # tool_number, target_pocket
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Touch-drag-to-scroll from anywhere in the list, not just via the
+        # scrollbar — QAbstractScrollArea doesn't enable this on its own,
+        # it needs an explicit gesture grab (per explicit request; the
+        # same gesture is grabbed on ToolCardWidget's own horizontal
+        # parameter strip for the same reason).
+        QScroller.grabGesture(self.viewport(), QScroller.ScrollerGestureType.TouchGesture)
 
         self._col = QVBoxLayout()
         self._col.setContentsMargins(8, 8, 8, 8)
@@ -131,6 +140,7 @@ class ToolListView(QScrollArea):
             card = self._cards.get(tool.tool_number)
             if card is None:
                 card = ToolCardWidget(tool)
+                card.pocket_change_requested.connect(self.pocket_change_requested)
                 self._cards[tool.tool_number] = card
             elif focused is None or not card.isAncestorOf(focused):
                 # Skip refreshing a card the user is actively typing in —

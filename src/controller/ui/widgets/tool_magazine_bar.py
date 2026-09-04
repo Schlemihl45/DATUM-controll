@@ -37,7 +37,7 @@ from __future__ import annotations
 from PySide6.QtCore import QMimeData, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QScrollArea, QScroller, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from controller.sim.simulation.tool_definition import ToolDefinition
@@ -257,6 +257,10 @@ class ToolMagazineBar(QScrollArea):
         # scrollbar that appears once pockets overflow the visible width.
         self.setFixedHeight(_SLOT_HEIGHT + 8 + 8 + 16)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Touch-drag-to-scroll from anywhere in the bar, not just via the
+        # scrollbar — see ToolListView's identical grab for why this needs
+        # to be explicit.
+        QScroller.grabGesture(self.viewport(), QScroller.ScrollerGestureType.TouchGesture)
 
         self._row = QHBoxLayout()
         self._row.setContentsMargins(8, 8, 8, 8)

@@ -14,6 +14,22 @@ QMainWindow {
     );
 }
 
+/* Plain QScrollArea (ToolPage's ToolListView/ToolMagazineBar — the only
+   two in the app) has no rule of its own anywhere below, so both its
+   frame and its viewport paint Qt's default (opaque) palette background —
+   a jarring gray box that doesn't belong on this app's gradient pages.
+   Making the scroll area AND its viewport's child widget transparent lets
+   the page gradient underneath show through instead, matching every
+   other page/Card look. */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+
 /* --- Card (ui/widgets/card.py) --- */
 QFrame#Card {
     background: qradialgradient(
@@ -314,6 +330,34 @@ QToolButton#ToolMenuButton:hover {
 
 QToolButton#ToolMenuButton:pressed {
     background: rgba(200, 216, 240, 255);
+}
+
+/* ToolCardWidget's header options menu (Measure / Set Pocket Number /
+   Delete) — sized up (padding + font, iconSize is set in code) for
+   better touch targets per explicit request; QMenu has no rule anywhere
+   else in the app, so this is a from-scratch style, not an override. */
+QMenu {
+    background: rgba(255, 255, 255, 250);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 6px;
+    padding: 6px;
+}
+
+QMenu::item {
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #1E2D40;
+}
+
+QMenu::item:selected {
+    background: rgba(76, 111, 224, 0.25);
+}
+
+QMenu::separator {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.10);
+    margin: 6px 4px;
 }
 
 /* ToolPage: small "#N" pocket-number badge, used both by the magazine
