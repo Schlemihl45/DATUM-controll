@@ -60,14 +60,8 @@ TOOL_MIME_TYPE = "application/x-datum-tool"
 
 _SLOT_MIN_WIDTH = 76
 _SLOT_MAX_WIDTH = 128
-_SLOT_HEIGHT = 108
-_VISUAL_SIZE = QSize(48, 48)
-# _SlotVisual draws its icon into exactly this rect (see paintEvent) — the
-# cached preview is rendered at this exact size so it's a clean 1:1 blit,
-# not scaled/blurred again at paint time.
-_ICON_RENDER_SIZE = QSize(
-    round(_VISUAL_SIZE.width() * 0.72), round(_VISUAL_SIZE.height() * 0.68),
-)
+_SLOT_HEIGHT = 124
+_VISUAL_SIZE = QSize(96, 96)
 
 
 def _tool_geometry_key(tool: ToolDefinition) -> tuple:
@@ -156,10 +150,6 @@ class _PocketSlot(DragHoldMixin, QFrame):
         root.setSpacing(3)
         root.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        self._badge_lbl = QLabel(f"#{pocket_number}")
-        self._badge_lbl.setObjectName("PocketBadge")
-        self._badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._badge_lbl)
 
         self._visual = _SlotVisual(self)
         root.addWidget(self._visual, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -168,6 +158,12 @@ class _PocketSlot(DragHoldMixin, QFrame):
         self._name_lbl.setObjectName("CardButtonLabel")
         self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self._name_lbl)
+
+        self._badge_lbl = QLabel(f"#{pocket_number}")
+        self._badge_lbl.setObjectName("PocketBadge")
+        self._badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(self._badge_lbl)
+
 
     @property
     def pocket_number(self) -> int:

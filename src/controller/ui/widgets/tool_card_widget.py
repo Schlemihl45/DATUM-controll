@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QDrag, QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QScrollArea,
@@ -44,7 +44,20 @@ from controller.ui.widgets.tool_magazine_bar import TOOL_MIME_TYPE
 from controller.ui.widgets.tool_param_group import ParamGroup
 from controller.ui.widgets.tool_profile_widget import ToolProfileWidget
 
-_NO_HOLDER = "— Keine —"
+_NO_HOLDER = "No Holder defined"
+
+# ── Defaults ─────────────────────────────────────────────────────────────────
+DEFAULT_DIAMETER       = 8.0
+DEFAULT_TOTAL_LEN      = 60.0
+DEFAULT_SHANK_DIA      = 8.0
+DEFAULT_CUTTING_LEN    = 22.0
+DEFAULT_FLUTE_COUNT    = 4
+DEFAULT_CORNER_RADIUS  = 0.0
+DEFAULT_TIP_ANGLE      = 118.0
+DEFAULT_TAPER_ANGLE    = 0.0
+DEFAULT_SERVICE_LIFE   = 120.0
+DEFAULT_USED_MIN       = 0.0
+DEFAULT_Z_OFFSET       = 0.0
 
 
 class _AutoSaveTextEdit(QPlainTextEdit):
@@ -244,11 +257,8 @@ class ToolCardWidget(Card):
         basic_form.addRow("Hersteller", self._manufacturer_edit)
         self._material_edit = QLineEdit()
         basic_form.addRow("Material", self._material_edit)
-        self._z_off_spin = QDoubleSpinBox()
-        self._z_off_spin.setRange(-500.0, 500.0)
-        self._z_off_spin.setDecimals(3)
-        self._z_off_spin.setSuffix(" mm")
-        basic_form.addRow("Offset (Z)", self._z_off_spin)
+        self._z_off_edit = _num_edit(decimals=3)
+        basic_form.addRow("Offset (Z)", self._z_off_edit)
         self._remark_edit = _AutoSaveTextEdit()
         self._remark_edit.setFixedHeight(54)
         basic_form.addRow("Notes", self._remark_edit)
@@ -271,12 +281,12 @@ class ToolCardWidget(Card):
         lower.setSpacing(0)
 
         geo = ParamGroup("Geometry")
-        self._diameter_spin = _mm_spin(0.01, 200.0)
-        geo.add_field("⌀", "mm", self._diameter_spin, "Diameter")
-        self._total_len_spin = _mm_spin(0.0, 500.0)
-        geo.add_field("L", "mm", self._total_len_spin, "Tool Length")
-        self._shank_dia_spin = _mm_spin(0.0, 200.0)
-        geo.add_field("⌀s", "mm", self._shank_dia_spin, "Shank Diameter")
+        self._diameter_edit = _num_edit()
+        geo.add_field("⌀", "mm", self._diameter_edit, "Diameter")
+        self._total_len_edit = _num_edit()
+        geo.add_field("L", "mm", self._total_len_edit, "Tool Length")
+        self._shank_dia_edit = _num_edit()
+        geo.add_field("⌀s", "mm", self._shank_dia_edit, "Shank Diameter")
         lower.addWidget(geo)
         lower.addWidget(_vline())
 
@@ -285,12 +295,10 @@ class ToolCardWidget(Card):
         # _collect_form_into() preserves whatever flute_length a tool
         # already had in the DB, same as the drag&drop-only pocket field.
         flutes = ParamGroup("Flutes")
-        self._cutting_length_spin = _mm_spin(0.0, 500.0)
-        flutes.add_field("Lc", "mm", self._cutting_length_spin, "Cutting Length")
-        self._flute_count_spin = QSpinBox()
-        self._flute_count_spin.setRange(0, 20)
-        self._flute_count_spin.setMaximumWidth(70)
-        flutes.add_field("Z", "", self._flute_count_spin, "Flutes")
+        self._cutting_length_edit = _num_edit()
+        flutes.add_field("Lc", "mm", self._cutting_length_edit, "Cutting Length")
+        self._flute_count_edit = _int_edit()
+        flutes.add_field("Z", "", self._flute_count_edit, "Flutes")
         lower.addWidget(flutes)
         self._specific_sep = _vline()
         lower.addWidget(self._specific_sep)
@@ -308,26 +316,22 @@ class ToolCardWidget(Card):
         # (and one of its two separators) is hidden rather than shown
         # empty; see _update_type_specific_visibility().
         specific = ParamGroup("Specific")
-        self._corner_r_spin = _mm_spin(0.0, 100.0)
-        specific.add_field("R", "mm", self._corner_r_spin, "Corner Radius")
-        self._tip_angle_spin = _deg_spin()
-        specific.add_field("κ", "°", self._tip_angle_spin, "Point Angle")
-        self._taper_angle_spin = _deg_spin()
-        specific.add_field("τ", "°", self._taper_angle_spin, "Taper Angle")
+        self._corner_r_edit = _num_edit()
+        specific.add_field("R", "mm", self._corner_r_edit, "Corner Radius")
+        self._tip_angle_edit = _num_edit(decimals=1)
+        specific.add_field("κ", "°", self._tip_angle_edit, "Point Angle")
+        self._taper_angle_edit = _num_edit(decimals=1)
+        specific.add_field("τ", "°", self._taper_angle_edit, "Taper Angle")
         lower.addWidget(specific)
         self._specific_sep2 = _vline()
         lower.addWidget(self._specific_sep2)
         self._specific_group = specific
 
         lifecycle = ParamGroup("Lifecycle")
-        self._service_life_spin = QDoubleSpinBox()
-        self._service_life_spin.setRange(0.0, 100000.0)
-        self._service_life_spin.setMaximumWidth(90)
-        lifecycle.add_field("Ts", "min", self._service_life_spin, "Service Life")
-        self._used_min_spin = QDoubleSpinBox()
-        self._used_min_spin.setRange(0.0, 100000.0)
-        self._used_min_spin.setMaximumWidth(90)
-        lifecycle.add_field("Tu", "min", self._used_min_spin, "Used")
+        self._service_life_edit = _num_edit(decimals=1)
+        lifecycle.add_field("Ts", "min", self._service_life_edit, "Service Life")
+        self._used_min_edit = _num_edit(decimals=1)
+        lifecycle.add_field("Tu", "min", self._used_min_edit, "Used")
         lower.addWidget(lifecycle)
 
         lower.addStretch(1)
@@ -349,13 +353,13 @@ class ToolCardWidget(Card):
         self._wire_live_preview_and_autosave()
 
     def _wire_live_preview_and_autosave(self) -> None:
-        geometry_spins = (
-            self._diameter_spin, self._cutting_length_spin,
-            self._shank_dia_spin, self._total_len_spin, self._corner_r_spin,
-            self._tip_angle_spin, self._taper_angle_spin,
+        geometry_edits = (
+            self._diameter_edit, self._cutting_length_edit,
+            self._shank_dia_edit, self._total_len_edit, self._corner_r_edit,
+            self._tip_angle_edit, self._taper_angle_edit,
         )
-        for spin in geometry_spins:
-            spin.valueChanged.connect(self._push_live_profile)
+        for edit in geometry_edits:
+            edit.textChanged.connect(self._push_live_profile)
         self._type_combo.currentIndexChanged.connect(self._push_live_profile)
         self._type_combo.currentIndexChanged.connect(self._update_type_specific_visibility)
         self._holder_combo.currentIndexChanged.connect(self._push_live_profile)
@@ -364,11 +368,12 @@ class ToolCardWidget(Card):
         # (valueChanged/currentIndexChanged); free-text fields use
         # editingFinished/focus-out instead of textChanged, so a row isn't
         # rewritten on every keystroke.
-        for spin in geometry_spins + (
-            self._z_off_spin, self._service_life_spin, self._used_min_spin,
-            self._flute_count_spin,
+        for edit in geometry_edits + (
+            self._z_off_edit, self._service_life_edit, self._used_min_edit,
+            self._flute_count_edit,
         ):
-            spin.valueChanged.connect(self._auto_save)
+            edit.editingFinished.connect(self._auto_save)
+
         self._type_combo.currentIndexChanged.connect(self._auto_save)
         self._holder_combo.currentIndexChanged.connect(self._auto_save)
         self._name_edit.editingFinished.connect(self._auto_save)
@@ -381,9 +386,9 @@ class ToolCardWidget(Card):
         show_corner = tt == ToolType.BULL_ENDMILL
         show_tip = tt in (ToolType.CHAMFER, ToolType.DRILL)
         show_taper = tt == ToolType.TAPER
-        self._specific_group.set_field_visible(self._corner_r_spin, show_corner)
-        self._specific_group.set_field_visible(self._tip_angle_spin, show_tip)
-        self._specific_group.set_field_visible(self._taper_angle_spin, show_taper)
+        self._specific_group.set_field_visible(self._corner_r_edit, show_corner)
+        self._specific_group.set_field_visible(self._tip_angle_edit, show_tip)
+        self._specific_group.set_field_visible(self._taper_angle_edit, show_taper)
         # "Specific" has no always-shown field anymore (clearance angle
         # was removed) — for a tool_type where none of the three apply
         # (ENDMILL, BALL_ENDMILL), hide the whole group rather than
@@ -410,19 +415,36 @@ class ToolCardWidget(Card):
         self._holder_combo.setCurrentIndex(max(0, idx))
         self._manufacturer_edit.setText(tool.manufacturer)
         self._material_edit.setText(tool.material)
-        self._z_off_spin.setValue(tool.z_offset)
         self._remark_edit.setPlainText(tool.remark)
 
-        self._diameter_spin.setValue(tool.diameter)
-        self._total_len_spin.setValue(tool.total_length)
-        self._shank_dia_spin.setValue(tool.shank_diameter)
-        self._cutting_length_spin.setValue(tool.cutting_length)
-        self._flute_count_spin.setValue(tool.flute_count)
-        self._corner_r_spin.setValue(tool.corner_radius)
-        self._tip_angle_spin.setValue(tool.tip_angle)
-        self._taper_angle_spin.setValue(tool.taper_angle)
-        self._service_life_spin.setValue(tool.service_life_min)
-        self._used_min_spin.setValue(tool.used_min)
+        self._z_off_edit.setText(f"{tool.z_offset:.3f}")
+
+        dia = tool.diameter if tool.diameter > 0 else DEFAULT_DIAMETER
+        self._diameter_edit.setText(f"{dia:.2f}")
+
+        tlen = tool.total_length if tool.total_length > 0 else DEFAULT_TOTAL_LEN
+        self._total_len_edit.setText(f"{tlen:.2f}")
+
+        sdia = tool.shank_diameter if tool.shank_diameter > 0 else DEFAULT_SHANK_DIA
+        self._shank_dia_edit.setText(f"{sdia:.2f}")
+
+        clen = tool.cutting_length if tool.cutting_length > 0 else DEFAULT_CUTTING_LEN
+        self._cutting_length_edit.setText(f"{clen:.2f}")
+
+        fl = tool.flute_count if tool.flute_count > 0 else DEFAULT_FLUTE_COUNT
+        self._flute_count_edit.setText(str(fl))
+
+        self._corner_r_edit.setText(f"{tool.corner_radius:.2f}")
+
+        tip = tool.tip_angle if tool.tip_angle > 0 else DEFAULT_TIP_ANGLE
+        self._tip_angle_edit.setText(f"{tip:.1f}")
+
+        self._taper_angle_edit.setText(f"{tool.taper_angle:.1f}")
+
+        sl = tool.service_life_min if tool.service_life_min > 0 else DEFAULT_SERVICE_LIFE
+        self._service_life_edit.setText(f"{sl:.1f}")
+
+        self._used_min_edit.setText(f"{tool.used_min:.1f}")
 
         self._loading = False
         self._update_type_specific_visibility()
@@ -490,18 +512,18 @@ class ToolCardWidget(Card):
             holder_preset=self._holder_combo.currentData(),
             manufacturer=self._manufacturer_edit.text(),
             material=self._material_edit.text(),
-            z_offset=self._z_off_spin.value(),
+            z_offset=_parse_float(self._z_off_edit.text(), DEFAULT_Z_OFFSET),
             remark=self._remark_edit.toPlainText(),
-            diameter=self._diameter_spin.value(),
-            total_length=self._total_len_spin.value(),
-            shank_diameter=self._shank_dia_spin.value(),
-            cutting_length=self._cutting_length_spin.value(),
-            flute_count=self._flute_count_spin.value(),
-            corner_radius=self._corner_r_spin.value(),
-            tip_angle=self._tip_angle_spin.value(),
-            taper_angle=self._taper_angle_spin.value(),
-            service_life_min=self._service_life_spin.value(),
-            used_min=self._used_min_spin.value(),
+            diameter=_parse_float(self._diameter_edit.text(), DEFAULT_DIAMETER),
+            total_length=_parse_float(self._total_len_edit.text(), DEFAULT_TOTAL_LEN),
+            shank_diameter=_parse_float(self._shank_dia_edit.text(), DEFAULT_SHANK_DIA),
+            cutting_length=_parse_float(self._cutting_length_edit.text(), DEFAULT_CUTTING_LEN),
+            flute_count=_parse_int(self._flute_count_edit.text(), DEFAULT_FLUTE_COUNT),
+            corner_radius=_parse_float(self._corner_r_edit.text(), DEFAULT_CORNER_RADIUS),
+            tip_angle=_parse_float(self._tip_angle_edit.text(), DEFAULT_TIP_ANGLE),
+            taper_angle=_parse_float(self._taper_angle_edit.text(), DEFAULT_TAPER_ANGLE),
+            service_life_min=_parse_float(self._service_life_edit.text(), DEFAULT_SERVICE_LIFE),
+            used_min=_parse_float(self._used_min_edit.text(), DEFAULT_USED_MIN),
         )
 
     def _push_live_profile(self, *_args) -> None:
@@ -576,20 +598,35 @@ class ToolCardWidget(Card):
             ToolDatabase.instance().delete_tool(self._tool_number)
 
 
-def _mm_spin(lo: float, hi: float) -> QDoubleSpinBox:
-    spin = QDoubleSpinBox()
-    spin.setRange(lo, hi)
-    spin.setDecimals(2)
-    spin.setMaximumWidth(90)
-    return spin
+def _num_edit(decimals: int = 2) -> QLineEdit:
+    edit = QLineEdit()
+    edit.setMaximumWidth(90)
+    val = QDoubleValidator()
+    val.setDecimals(decimals)
+    val.setNotation(QDoubleValidator.Notation.StandardNotation)
+    edit.setValidator(val)
+    return edit
 
 
-def _deg_spin() -> QDoubleSpinBox:
-    spin = QDoubleSpinBox()
-    spin.setRange(0.0, 180.0)
-    spin.setDecimals(1)
-    spin.setMaximumWidth(90)
-    return spin
+def _int_edit() -> QLineEdit:
+    edit = QLineEdit()
+    edit.setMaximumWidth(70)
+    edit.setValidator(QIntValidator(0, 999))
+    return edit
+
+
+def _parse_float(text: str, default: float) -> float:
+    try:
+        return float(text.replace(",", "."))
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_int(text: str, default: int) -> int:
+    try:
+        return int(text)
+    except (ValueError, TypeError):
+        return default
 
 
 def _vline() -> QFrame:

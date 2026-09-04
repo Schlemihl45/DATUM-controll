@@ -221,10 +221,7 @@ def render_tool_pixmap(
 
 
 class ToolProfileWidget(QWidget):
-    """Live 2D tool silhouette. Call set_tool() whenever the tool (or a
-    transient preview built from unsaved form values — see
-    ToolCardWidget._push_live_profile()) changes; no other signal wiring
-    needed, it's a pure pull/redraw on each call."""
+    """Live 2D tool silhouette with metallic 3D gradients."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
