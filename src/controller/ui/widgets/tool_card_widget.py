@@ -490,11 +490,18 @@ class ToolCardWidget(Card):
 
         # Collapsed-state info grid — live values straight off the form
         # widgets (not self._tool) so it reflects unsaved edits too, same
-        # as the rest of this method already does for name/pocket.
+        # as the rest of this method already does for name/pocket. These
+        # are QLineEdits (with validators) now, not QDoubleSpinBox/
+        # QSpinBox — parse via the same helpers _collect_form_into() uses,
+        # so an in-progress/invalid edit falls back to the same default
+        # rather than showing garbage.
         self._info_name_val.set_full_text(name)
-        self._info_length_val.setText(f"{self._total_len_spin.value():.1f} mm")
-        self._info_cutting_val.setText(f"{self._cutting_length_spin.value():.1f} mm")
-        self._info_flutes_val.setText(str(self._flute_count_spin.value()))
+        length = _parse_float(self._total_len_edit.text(), DEFAULT_TOTAL_LEN)
+        self._info_length_val.setText(f"{length:.1f} mm")
+        cutting = _parse_float(self._cutting_length_edit.text(), DEFAULT_CUTTING_LEN)
+        self._info_cutting_val.setText(f"{cutting:.1f} mm")
+        flutes = _parse_int(self._flute_count_edit.text(), DEFAULT_FLUTE_COUNT)
+        self._info_flutes_val.setText(str(flutes))
 
     def _collect_form_into(self, base: ToolDefinition) -> ToolDefinition:
         # pocket, cutting_speed, feed_rate, flute_length, clearance_angle

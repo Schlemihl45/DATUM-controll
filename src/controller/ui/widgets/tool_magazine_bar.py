@@ -62,6 +62,15 @@ _SLOT_MIN_WIDTH = 76
 _SLOT_MAX_WIDTH = 128
 _SLOT_HEIGHT = 124
 _VISUAL_SIZE = QSize(96, 96)
+# _SlotVisual draws its icon into exactly this rect (see paintEvent) — the
+# cached preview is rendered at this exact size so it's a clean 1:1 blit,
+# not scaled/blurred again at paint time. (Lost in an earlier merge —
+# _VISUAL_SIZE changed from 48x48 to 96x96 there but this derived
+# constant's definition got dropped while its one use site survived,
+# leaving a NameError.)
+_ICON_RENDER_SIZE = QSize(
+    round(_VISUAL_SIZE.width() * 0.72), round(_VISUAL_SIZE.height() * 0.68),
+)
 
 
 def _tool_geometry_key(tool: ToolDefinition) -> tuple:
