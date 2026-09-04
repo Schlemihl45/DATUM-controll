@@ -31,8 +31,8 @@ class HolderProfile:
     Parameters
     ----------
     name :
-        Preset name, e.g. "ER32", "SK40" — primary key in the tool_holders
-        DB table and the value stored in tools.holder_preset.
+        Preset name, e.g. "ER16", "SK30-Er25" — primary key in the
+        tool_holders DB table and the value stored in tools.holder_preset.
     kind :
         Coarse category, e.g. "ER_COLLET", "SK", "BT" — informational, not
         used by the geometry/collision code (only `profile` is).

@@ -295,20 +295,73 @@ QPushButton#ToolFilterToggle:checked {
     color: #FFFFFF;
 }
 
-/* ToolPage: per-row "details" button (tool_list_card.py) — plain
-   QToolButton for the same reason (Card's margins don't fit a 36px
-   inline icon button). No QToolButton rule exists anywhere else, so this
-   is a from-scratch style rather than an override. */
-QToolButton#ToolDetailsButton {
+/* ToolPage: per-card "..." options-menu button (tool_card_widget.py's
+   ToolCardWidget header) — plain QToolButton for the same reason (Card's
+   margins don't fit a 36px inline icon button). No QToolButton rule
+   exists anywhere else, so this is a from-scratch style rather than an
+   override. */
+QToolButton#ToolMenuButton {
     background: rgba(45, 55, 72, 200);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 4px;
 }
 
-QToolButton#ToolDetailsButton:hover {
+QToolButton#ToolMenuButton:hover {
     background: rgba(60, 75, 96, 255);
 }
 
-QToolButton#ToolDetailsButton:pressed {
+QToolButton#ToolMenuButton:pressed {
     background: rgba(35, 42, 53, 255);
+}
+
+/* ToolPage: small "#N" pocket-number badge, used both by the magazine
+   bar's _PocketSlot and ToolCardWidget's header (tool_magazine_bar.py,
+   tool_card_widget.py) — a compact pill, distinct from the plain
+   CardButtonLabel text around it. */
+QLabel#PocketBadge {
+    background: rgba(76, 111, 224, 0.30);
+    border: 1px solid rgba(120, 155, 230, 0.5);
+    border-radius: 8px;
+    padding: 1px 6px;
+    color: #C9D6FF;
+    font-weight: 600;
+    font-size: 11px;
+}
+
+/* ToolPage: vertical divider between side-by-side parameter groups in an
+   expanded ToolCardWidget's lower body (tool_card_widget.py's _vline()) —
+   a plain QFrame with a fixed 1px width needs a background-color here to
+   actually render as a visible line; QFrame's own frame-shape styling is
+   deliberately not used since it can't be tinted to match the theme. */
+QFrame#ParamSeparator {
+    background-color: rgba(255, 255, 255, 0.10);
+    border: none;
+}
+
+/* ToolPage: small muted symbol+unit caption row in a ParamGroup cluster
+   (tool_param_group.py) — e.g. "⌀ mm", sits between the group's category
+   title and its input field. */
+QLabel#ParamUnitLabel {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+}
+
+/* ToolPage: "Create new tool" card (tool_list_card.py's _CreateToolCard) —
+   a CardButton variant, dashed border to read as an add-affordance rather
+   than a normal tool entry. */
+QFrame#Card[variant="create_tool"] {
+    border: 1px dashed rgba(120, 155, 230, 0.55);
+    background: rgba(76, 111, 224, 0.08);
+}
+
+QFrame#Card[variant="create_tool"]:hover {
+    background: rgba(76, 111, 224, 0.16);
+    border-color: rgba(140, 170, 235, 0.75);
+}
+
+/* ToolPage: expanded ToolCardWidget (dynamic "expanded" property toggled
+   in set_expanded()) — a subtle accent border marks which card is
+   currently open, without changing the base Card look everywhere else. */
+QFrame#Card[expanded="true"] {
+    border: 1px solid rgba(120, 155, 230, 0.55);
 }

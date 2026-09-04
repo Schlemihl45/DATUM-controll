@@ -1,122 +1,82 @@
 """
-ui/widgets/tool_list_card.py — ToolListCard (one row in ToolPage's main
-list) and ToolListView (the scrollable list of them).
+ui/widgets/tool_list_card.py — ToolListView (the scrollable vertical tool
+list) and _CreateToolCard (its pinned first row). Per-tool rows are
+ToolCardWidget instances (tool_card_widget.py) — this module no longer
+defines a list-row card class of its own (the old, page-navigating
+ToolListCard was replaced by ToolCardWidget's inline expansion).
+
+ToolListView is also the ONE place dropping a tool empties its magazine
+pocket (pocket -> UNASSIGNED_POCKET) — see tool_magazine_bar.py's
+_PocketSlot: it's a drag source, but per the current design a rejected
+drop does NOT fall back to "empty the pocket" anymore; only an explicit
+drop onto this list does. A drop anywhere else leaves the tool exactly
+where it was (Qt's own drag-rejection animation is what makes it visually
+"spring back" to its slot).
+
+Update-in-place, not rebuild-from-scratch: set_tools() reuses existing
+ToolCardWidget instances (matched by tool_number) instead of tearing the
+whole list down every time — a full rebuild would collapse every
+expanded card (and interrupt in-progress typing) on every single
+auto-save, since each auto-save write re-triggers this via
+ToolDatabaseSignals.tool_changed. A card currently holding keyboard focus
+is skipped so an in-progress, not-yet-committed edit is never overwritten
+by a reload triggered by some OTHER field's save.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QMimeData, QSize, Signal
-from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import (
-    QGridLayout, QLabel, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
-)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from controller.sim.simulation.tool_definition import ToolDefinition
 from controller.ui.icon_loader import get_icon
-from controller.ui.widgets.card import Card
-from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
-from controller.ui.widgets.tool_icons import tool_type_icon
+from controller.ui.widgets.card_button import CardButton
+from controller.ui.widgets.tool_card_widget import ToolCardWidget
 from controller.ui.widgets.tool_magazine_bar import TOOL_MIME_TYPE
 
 
-class ToolListCard(DragHoldMixin, Card):
-    """One row: pocket number | type icon | 2x4 name/diameter/flute-length/
-    flutes grid | details button. Also a drag source (same MIME type
-    ToolMagazineBar's pocket slots use) so a tool can be dragged straight
-    from the list onto a magazine pocket — gated by DragHoldMixin (press-
-    and-hold + move threshold) so an ordinary click never misfires as a
-    drag (see tool_drag.py)."""
+class _CreateToolCard(CardButton):
+    """Pinned first row: a big "+ Create new tool" button-card."""
 
-    tool_details_requested = Signal(int)   # tool_number
-
-    def __init__(self, tool: ToolDefinition, parent: QWidget | None = None) -> None:
-        super().__init__(title=None, parent=parent, orientation=Qt.Orientation.Horizontal)
-        self._tool_number = tool.tool_number
-        self._dh_init()
-        self.content_layout.setSpacing(12)
-
-        pocket_lbl = QLabel(str(tool.pocket) if tool.pocket >= 1 else "-")
-        pocket_lbl.setObjectName("CardTitle")
-        pocket_lbl.setFixedWidth(24)
-        pocket_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.content_layout.addWidget(pocket_lbl)
-
-        icon_lbl = QLabel()
-        icon_lbl.setFixedSize(32, 32)
-        icon_lbl.setPixmap(tool_type_icon(tool.tool_type, size=32).pixmap(32, 32))
-        self.content_layout.addWidget(icon_lbl)
-
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(18)
-        grid.setVerticalSpacing(2)
-        display_name = tool.name or tool.remark or f"T{tool.tool_number}"
-        for col, (label, value) in enumerate((
-            ("Name",            display_name),
-            ("Type",            f"{tool.tool_type}"),
-            ("Diameter",        f"{tool.diameter:.2f} mm"),
-            ("Flute Length",    f"{tool.flute_length:.1f} mm"),
-            ("Flutes",          str(tool.flute_count)),
-        )):
-            lbl = QLabel(label)
-            lbl.setObjectName("CardTitle")
-            val = QLabel(value)
-            val.setObjectName("CardButtonLabel")
-            grid.addWidget(lbl, 0, col)
-            grid.addWidget(val, 1, col)
-        grid_widget = QWidget()
-        grid_widget.setLayout(grid)
-        self.content_layout.addWidget(grid_widget, stretch=1)
-
-        # Plain QToolButton, not the Card-based CardButton — Card's
-        # hardcoded 16px margins don't fit a compact 36px inline button.
-        self._details_btn = QToolButton()
-        self._details_btn.setIcon(get_icon("settings", tint=True))
-        self._details_btn.setIconSize(QSize(20, 20))
-        self._details_btn.setFixedSize(36, 36)
-        self._details_btn.setObjectName("ToolDetailsButton")
-        self._details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._details_btn.setToolTip("Tool details")
-        self._details_btn.clicked.connect(
-            lambda: self.tool_details_requested.emit(self._tool_number)
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(
+            "Create new tool", icon=get_icon("addTool", tint=True), icon_size=32,
         )
-        self.content_layout.addWidget(self._details_btn)
+        self.setProperty("variant", "create_tool")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumHeight(72)
 
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
 
-    # ── Drag source (into a magazine pocket — see tool_magazine_bar.py) ────────
-    # Gated by DragHoldMixin: the drag itself only starts from
-    # mouseMoveEvent, once press-and-hold + a move past the threshold are
-    # both satisfied — see tool_drag.py's module docstring for why.
+class _ListContainer(QWidget):
+    """The actual scrolled widget inside ToolListView, and the real drop
+    target — a QScrollArea delivers drag/drop events to the widget it
+    scrolls, not to itself."""
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._dh_press(event.position().toPoint())
-        super().mousePressEvent(event)
+    tool_dropped_for_removal = Signal(int)   # tool_number
 
-    def mouseMoveEvent(self, event) -> None:
-        if self._dh_move(event.position().toPoint()):
-            self._dh_release()
-            self._start_drag()
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(TOOL_MIME_TYPE):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        raw = bytes(event.mimeData().data(TOOL_MIME_TYPE)).decode("utf-8")
+        try:
+            tool_number = int(raw)
+        except ValueError:
             return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._dh_release()
-        super().mouseReleaseEvent(event)
-
-    def _start_drag(self) -> None:
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(TOOL_MIME_TYPE, str(self._tool_number).encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.setPixmap(scaled_drag_pixmap(self))
-        drag.exec(Qt.DropAction.MoveAction)
+        event.acceptProposedAction()
+        self.tool_dropped_for_removal.emit(tool_number)
 
 
 class ToolListView(QScrollArea):
-    """Vertically scrollable list of ToolListCard rows."""
+    """Vertically scrollable list: pinned _CreateToolCard first, then one
+    ToolCardWidget per tool."""
 
-    tool_details_requested = Signal(int)   # tool_number
+    create_tool_requested = Signal()
+    tool_dropped_for_removal = Signal(int)   # tool_number
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -128,34 +88,66 @@ class ToolListView(QScrollArea):
         self._col.setSpacing(6)
         self._col.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        container = QWidget()
+        container = _ListContainer()
         container.setLayout(self._col)
+        container.tool_dropped_for_removal.connect(self.tool_dropped_for_removal)
         self.setWidget(container)
 
-        self._empty_lbl = QLabel("No tools found")
-        self._empty_lbl.setObjectName("CardTitle")
-        self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._col.addWidget(self._empty_lbl)
-        self._empty_lbl.setVisible(False)
+        self._create_card = _CreateToolCard()
+        self._create_card.clicked.connect(self.create_tool_requested)
+        self._col.addWidget(self._create_card)
+
+        self._cards: dict[int, ToolCardWidget] = {}
+        self._empty_lbl: QLabel | None = None
 
     def set_tools(self, tools: list[ToolDefinition]) -> None:
-        """Rebuild the card list. Simple full-teardown-and-rebuild — no
-        model/view layer needed at the expected (low hundreds) tool count."""
-        while self._col.count():
-            item = self._col.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+        """Reconcile the card list (below the pinned create-card) with
+        *tools*, in order — see module docstring for why this updates
+        existing ToolCardWidget instances in place rather than tearing
+        everything down and rebuilding."""
+        wanted = {t.tool_number: t for t in tools}
+        focused = QApplication.instance().focusWidget() if QApplication.instance() else None
+
+        # Drop cards for tools no longer present (deleted, or filtered out).
+        for tn in list(self._cards.keys()):
+            if tn not in wanted:
+                card = self._cards.pop(tn)
+                self._col.removeWidget(card)
+                card.deleteLater()
+
+        if self._empty_lbl is not None:
+            self._col.removeWidget(self._empty_lbl)
+            self._empty_lbl.deleteLater()
+            self._empty_lbl = None
 
         if not tools:
-            empty = QLabel("No tools found.")
-            empty.setObjectName("CardTitle")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._col.addWidget(empty)
+            self._empty_lbl = QLabel("Keine Werkzeuge gefunden.")
+            self._empty_lbl.setObjectName("CardTitle")
+            self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._col.addWidget(self._empty_lbl)
             return
 
-        for tool in tools:
-            card = ToolListCard(tool)
-            card.tool_details_requested.connect(self.tool_details_requested)
-            self._col.addWidget(card)
-        self._col.addStretch()
+        for position, tool in enumerate(tools):
+            card = self._cards.get(tool.tool_number)
+            if card is None:
+                card = ToolCardWidget(tool)
+                self._cards[tool.tool_number] = card
+            elif focused is None or not card.isAncestorOf(focused):
+                # Skip refreshing a card the user is actively typing in —
+                # see module docstring.
+                card.set_tool(tool)
+
+            target_index = position + 1   # index 0 is the create-card
+            if self._col.indexOf(card) != target_index:
+                self._col.removeWidget(card)
+                self._col.insertWidget(target_index, card)
+
+    def card_for(self, tool_number: int) -> ToolCardWidget | None:
+        return self._cards.get(tool_number)
+
+    def expand_and_scroll_to(self, tool_number: int) -> None:
+        card = self._cards.get(tool_number)
+        if card is None:
+            return
+        card.set_expanded(True)
+        self.ensureWidgetVisible(card)
