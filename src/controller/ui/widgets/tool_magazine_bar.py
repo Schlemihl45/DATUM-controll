@@ -29,9 +29,15 @@ payload is just the UTF-8-encoded tool_number.
 
 A tool is emptied from its pocket (pocket -> UNASSIGNED_POCKET) in
 exactly ONE place: an explicit drop onto the vertical tool list (see
-tool_list_card.py's _ListContainer). Dropping a pocket's tool anywhere
-else that doesn't accept it (another window, empty space, ...) is simply
-rejected.
+tool_list_card.py's _ListContainer) of a drag that ORIGINATED from this
+magazine bar. _PocketSlot._start_drag() tags its drag with the second
+marker MIME type TOOL_ORIGIN_MAGAZINE_MIME_TYPE (empty payload, presence
+is all that matters); _CardHeader's drag (a tool being dragged around
+within/out of the list itself) never sets it, so the list's drop handler
+only ever treats a magazine->list drop as "unassign" — dragging a card
+around within the list can never empty a pocket. Dropping a pocket's tool
+anywhere else that doesn't accept it (another window, empty space, back
+onto the list from a card drag, ...) is simply rejected.
 """
 from __future__ import annotations
 
@@ -47,6 +53,9 @@ from controller.ui.widgets.tool_drag import DragHoldMixin, scaled_drag_pixmap
 from controller.ui.widgets.tool_profile_widget import render_tool_pixmap
 
 TOOL_MIME_TYPE = "application/x-datum-tool"
+# Marker-only MIME type (payload is irrelevant, only presence matters) —
+# see the module docstring's "Drag & drop mechanics" section.
+TOOL_ORIGIN_MAGAZINE_MIME_TYPE = "application/x-datum-tool-origin-magazine"
 
 _SLOT_MIN_WIDTH = 76
 _SLOT_MAX_WIDTH = 128
@@ -184,8 +193,7 @@ class _PocketSlot(DragHoldMixin, QFrame):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
-        was_click = self._dh_press_pos is not None
-        self._dh_release()
+        was_click = self._dh_release(event.position().toPoint())
         if (
             was_click and event.button() == Qt.MouseButton.LeftButton
             and self._tool is not None
@@ -199,6 +207,13 @@ class _PocketSlot(DragHoldMixin, QFrame):
         drag = QDrag(self)
         mime = QMimeData()
         mime.setData(TOOL_MIME_TYPE, str(self._tool.tool_number).encode("utf-8"))
+        # Marks this drag as having come FROM the magazine — the vertical
+        # list's drop handler (tool_list_card.py's _ListContainer) only
+        # accepts a drop as "unassign this pocket" when this marker is
+        # present, so dragging a tool CARD around (which never sets it)
+        # can never empty a pocket, only an explicit magazine->list drop
+        # can (see that module's docstring).
+        mime.setData(TOOL_ORIGIN_MAGAZINE_MIME_TYPE, b"1")
         drag.setMimeData(mime)
         drag.setPixmap(scaled_drag_pixmap(self))
         drag.exec(Qt.DropAction.MoveAction)
