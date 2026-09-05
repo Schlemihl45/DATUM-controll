@@ -1,10 +1,10 @@
 """
 ui/widgets/tool_card_widget.py — ToolCardWidget: one tool, rendered as an
 inline-expanding card (DATRON Next style) — replaces the previous separate
-ToolDetailPage entirely. Collapsed: just the header (pocket badge, tool
-number, name, type icon, "..." options menu). Clicking the header toggles
-an expanded body below it, in place, inside the same vertical list —
-there is no page navigation anymore.
+ToolDetailPage entirely. Collapsed: just the header (pocket badge, name,
+type icon, "..." options menu). Clicking the header toggles an expanded
+body below it, in place, inside the same vertical list — there is no page
+navigation anymore.
 
 Every field in the expanded body auto-saves individually (valueChanged/
 editingFinished -> ToolDatabase.upsert_tool()) — see _auto_save(). There
@@ -130,23 +130,8 @@ class _CardHeader(DragHoldMixin, QWidget):
 class ToolCardWidget(Card):
     """One tool's list row. See module docstring."""
 
-    # tool_number, target_pocket — emitted by the header menu's "Set Pocket
-    # Number" action. Deliberately NOT written straight to ToolDatabase
-    # here: ToolPage already owns the occupant-kick-on-swap logic for
-    # pocket reassignment (see its _on_pocket_reassigned(), also driven by
-    # ToolMagazineBar's drag&drop) — re-emitting through the same handler
-    # keeps that one place as the single source of truth instead of a
-    # second, divergent implementation.
     pocket_change_requested = Signal(int, int)
-
-    # Emitted whenever set_expanded() actually changes this card's state
-    # — ToolListView listens to implement the "only one card open at a
-    # time" accordion (see its _on_card_expanded_changed()).
     expanded_changed = Signal(bool)
-
-    # Re-exported from _CardHeader — ToolListView listens to temporarily
-    # suspend the list's own touch-scroll while a card is mid-drag (see
-    # its set_scroll_enabled()), so the two gestures don't interfere.
     drag_started = Signal()
     drag_finished = Signal()
 
@@ -182,7 +167,6 @@ class ToolCardWidget(Card):
         header_row.addWidget(self._pocket_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         # Info grid (Name/Length/Cutting Length/Flutes)
-        # Keeps showing even when expanded now, maintaining the visual header structure.
         self._info_grid_widget = self._build_collapsed_info_grid()
         header_row.addWidget(
             self._info_grid_widget, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter
@@ -211,8 +195,6 @@ class ToolCardWidget(Card):
     # ── Collapsed-state info grid ───────────────────────────────────────────
 
     def _build_collapsed_info_grid(self) -> QWidget:
-        """The 2-row label/value strip (Name/Length/Cutting Length/Flutes),
-        updated in _update_header_label(). Stays visible even when expanded."""
         widget = QWidget()
         grid = QGridLayout(widget)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -220,7 +202,7 @@ class ToolCardWidget(Card):
         grid.setVerticalSpacing(1)
 
         self._info_name_val = ElidedLabel()
-        self._info_name_val.setMaximumWidth(160)
+        self._info_name_val.setFixedWidth(256)
         self._info_length_val = QLabel()
         self._info_cutting_val = QLabel()
         self._info_flutes_val = QLabel()
@@ -232,11 +214,11 @@ class ToolCardWidget(Card):
             ("Flutes", self._info_flutes_val),
         )):
             caption_lbl = QLabel(caption)
-            caption_lbl.setObjectName("CardTitle")
-            value_lbl.setObjectName("CardButtonLabel")
+            caption_lbl.setObjectName("ToolCardTitle")
+            value_lbl.setObjectName("ToolCardButtonLabel")
             grid.addWidget(caption_lbl, 0, col)
             grid.addWidget(value_lbl, 1, col)
-        grid.setColumnStretch(4, 1)   # keep the four columns left-packed
+        grid.setColumnStretch(4, 1)
         return widget
 
     # ── Body construction ───────────────────────────────────────────────────
@@ -246,7 +228,6 @@ class ToolCardWidget(Card):
         root.setContentsMargins(0, 6, 0, 0)
         root.setSpacing(12)
 
-        # Upper block: 2D preview (left) + basic identity fields (right).
         upper = QHBoxLayout()
         upper.setSpacing(20)
 
@@ -282,15 +263,6 @@ class ToolCardWidget(Card):
         upper.addWidget(basic_widget, stretch=1)
         root.addLayout(upper)
 
-        # Lower block: parameter groups, separated by thin vertical rules,
-        # left-aligned with a trailing stretch pushing everything left.
-        # Wrapped in its own non-resizable, horizontally-scrolling strip
-        # (rather than laid straight into `root`) because this row's
-        # natural minimum width (four ParamGroups' worth of columns) can
-        # easily exceed the card's/list's actual width — without this,
-        # ToolListView's own horizontal scrollbar stays off (by design,
-        # only vertical scrolling), so the excess used to simply be
-        # clipped at the card's right edge instead of reachable.
         lower = QHBoxLayout()
         lower.setSpacing(0)
 
@@ -304,10 +276,6 @@ class ToolCardWidget(Card):
         lower.addWidget(geo)
         lower.addWidget(_vline())
 
-        # flute_length was removed per explicit request — cutting_length
-        # is the only length that actually matters here; replace() in
-        # _collect_form_into() preserves whatever flute_length a tool
-        # already had in the DB, same as the drag&drop-only pocket field.
         flutes = ParamGroup("Flutes")
         self._cutting_length_edit = _num_edit()
         flutes.add_field("Lc", "mm", self._cutting_length_edit, "Cutting Length")
@@ -317,18 +285,6 @@ class ToolCardWidget(Card):
         self._specific_sep = _vline()
         lower.addWidget(self._specific_sep)
 
-        # "Specific" — every field here is dynamically shown only for the
-        # tool_type that actually uses it (see
-        # ToolDefinition.profile_radius_at()/profile_radius_at_array():
-        # BULL_ENDMILL alone consumes corner_radius, CHAMFER and DRILL
-        # both consume tip_angle, TAPER alone consumes taper_angle; every
-        # other type's profile ignores whatever value sits there). Unlike
-        # the previous version, there is no always-shown field (clearance
-        # angle/"alpha" was removed per explicit request — it wasn't
-        # self-explanatory and nothing reads it) — so for ENDMILL/
-        # BALL_ENDMILL, where none of the three apply, the whole group
-        # (and one of its two separators) is hidden rather than shown
-        # empty; see _update_type_specific_visibility().
         specific = ParamGroup("Specific")
         self._corner_r_edit = _num_edit()
         specific.add_field("R", "mm", self._corner_r_edit, "Corner Radius")
@@ -378,10 +334,6 @@ class ToolCardWidget(Card):
         self._type_combo.currentIndexChanged.connect(self._update_type_specific_visibility)
         self._holder_combo.currentIndexChanged.connect(self._push_live_profile)
 
-        # Auto-save: discrete widgets are already "final" on every change
-        # (valueChanged/currentIndexChanged); free-text fields use
-        # editingFinished/focus-out instead of textChanged, so a row isn't
-        # rewritten on every keystroke.
         for edit in geometry_edits + (
             self._z_off_edit, self._service_life_edit, self._used_min_edit,
             self._flute_count_edit,
@@ -403,13 +355,7 @@ class ToolCardWidget(Card):
         self._specific_group.set_field_visible(self._corner_r_edit, show_corner)
         self._specific_group.set_field_visible(self._tip_angle_edit, show_tip)
         self._specific_group.set_field_visible(self._taper_angle_edit, show_taper)
-        # "Specific" has no always-shown field anymore (clearance angle
-        # was removed) — for a tool_type where none of the three apply
-        # (ENDMILL, BALL_ENDMILL), hide the whole group rather than
-        # showing an empty category header. Its trailing separator hides
-        # with it so the remaining ones read as "Flutes | Lifecycle"
-        # instead of a double rule; the separator BEFORE it stays put and
-        # simply ends up doing that job.
+
         has_specific = show_corner or show_tip or show_taper
         self._specific_group.setVisible(has_specific)
         self._specific_sep2.setVisible(has_specific)
@@ -474,17 +420,9 @@ class ToolCardWidget(Card):
 
     def set_expanded(self, expanded: bool) -> None:
         if expanded == self._expanded:
-            # No-op guard: expand_and_scroll_to()/accordion collapse can
-            # both call this redundantly (e.g. clicking the same magazine
-            # slot twice, or the accordion collapsing a card that's
-            # already collapsed) — skip the polish cycle and, more
-            # importantly, don't re-emit expanded_changed for nothing.
             return
         self._expanded = expanded
         self._body.setVisible(expanded)
-        # Dynamic property so QSS can style an expanded card differently
-        # (e.g. an accent border) — same unpolish/polish idiom
-        # card_button.py's checkable state already uses.
         self.setProperty("expanded", expanded)
         self.style().unpolish(self)
         self.style().polish(self)
@@ -500,18 +438,12 @@ class ToolCardWidget(Card):
             return
         pocket = self._tool.pocket
         self._pocket_badge.setText(str(pocket) if pocket >= 1 else "-")
-        name = self._name_edit.text() or self._tool.remark or f"Unbenannt"
+        name = self._name_edit.text() or self._tool.remark or "Unbenannt"
         tt = self._type_combo.currentData() or ToolType.ENDMILL
-        self._type_icon_lbl.setPixmap(tool_type_icon(tt, size=28).pixmap(28, 28))
+        self._type_icon_lbl.setPixmap(tool_type_icon(tt, size=64).pixmap(64, 64))
 
-        # Collapsed-state info grid — live values straight off the form
-        # widgets (not self._tool) so it reflects unsaved edits too, same
-        # as the rest of this method already does for name/pocket. These
-        # are QLineEdits (with validators) now, not QDoubleSpinBox/
-        # QSpinBox — parse via the same helpers _collect_form_into() uses,
-        # so an in-progress/invalid edit falls back to the same default
-        # rather than showing garbage.
-        self._info_name_val.set_full_text(f"T{self._tool_number}  ·  {name}")
+        # Ohne Tool-Number: Name wird direkt angezeigt
+        self._info_name_val.set_full_text(name)
         length = _parse_float(self._total_len_edit.text(), DEFAULT_TOTAL_LEN)
         self._info_length_val.setText(f"{length:.1f} mm")
         cutting = _parse_float(self._cutting_length_edit.text(), DEFAULT_CUTTING_LEN)
@@ -520,14 +452,6 @@ class ToolCardWidget(Card):
         self._info_flutes_val.setText(str(flutes))
 
     def _collect_form_into(self, base: ToolDefinition) -> ToolDefinition:
-        # pocket, cutting_speed, feed_rate, flute_length, clearance_angle
-        # deliberately NOT listed here: pocket is drag&drop-only/"Set
-        # Pocket Number"-only (never a plain form field in this card);
-        # cutting_speed/feed_rate were removed from this UI per explicit
-        # request; flute_length ("no added value over cutting_length")
-        # and clearance_angle ("alpha" — unexplained, unused) were removed
-        # per explicit request too. replace() preserves whatever value
-        # each already had on `base`.
         return replace(
             base,
             name=self._name_edit.text(),
@@ -565,10 +489,6 @@ class ToolCardWidget(Card):
         self._update_header_label()
 
     def _show_menu(self) -> None:
-        # Sized up (padding/font + icon-size, see dark.qss/light.qss's
-        # QMenu rule) per explicit request for a more touch-friendly menu.
-        # QMenu has no setIconSize() method (that's QToolBar/QListView) —
-        # the "icon-size" QSS property is the correct way to size it.
         menu = QMenu(self)
         measure_action = menu.addAction(get_icon("scan-cube", tint=True), "Measure")
         measure_action.triggered.connect(self._show_measure_stub)
@@ -579,27 +499,19 @@ class ToolCardWidget(Card):
         menu.exec(self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft()))
 
     def _prompt_set_pocket(self) -> None:
-        """Manual alternative to drag&drop for pocket assignment — asks
-        for a pocket number and re-emits it as pocket_change_requested
-        rather than writing ToolDatabase directly, so ToolPage's existing
-        occupant-kick-on-swap logic (shared with magazine drag&drop)
-        handles it uniformly. -1 unassigns, same convention as the
-        magazine bar's "drop onto the list" gesture."""
         if self._tool is None:
             return
         pocket_count = AppSettings.instance().tool_pocket_count
         current = self._tool.pocket if self._tool.pocket >= 1 else UNASSIGNED_POCKET
         value, ok = QInputDialog.getInt(
             self, "Set Pocket Number",
-            f"Pocket for T{self._tool_number} ({UNASSIGNED_POCKET} = unassigned):",
+            f"Pocket ({UNASSIGNED_POCKET} = unassigned):",
             current, UNASSIGNED_POCKET, pocket_count,
         )
         if ok:
             self.pocket_change_requested.emit(self._tool_number, value)
 
     def _show_measure_stub(self) -> None:
-        # No tool-measurement backend/hardware hook exists anywhere in
-        # this app yet — an honest stub rather than a fabricated result.
         QMessageBox.information(
             self, "Measure",
             "Die Werkzeug-Vermessung ist noch nicht implementiert.",
@@ -610,7 +522,7 @@ class ToolCardWidget(Card):
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Werkzeug löschen")
         box.setText(
-            f"Werkzeug T{self._tool_number} wirklich löschen?\n"
+            "Werkzeug wirklich löschen?\n"
             "Diese Aktion kann nicht rückgängig gemacht werden."
         )
         delete_btn = box.addButton("Löschen", QMessageBox.ButtonRole.DestructiveRole)

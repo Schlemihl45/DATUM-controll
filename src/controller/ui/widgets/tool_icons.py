@@ -28,4 +28,4 @@ _ICON_NAMES: dict[ToolType, str] = {
 
 def tool_type_icon(tool_type: ToolType, size: int = 24) -> QIcon:
     name = _ICON_NAMES.get(tool_type, "endmill")
-    return get_icon(name, tint=True, size=QSize(size, size))
+    return get_icon(name, size=QSize(size, size), color="#D6D6D6")

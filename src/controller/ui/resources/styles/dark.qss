@@ -161,7 +161,7 @@ QLabel#StatusBarLog[severity="error"] {
 QLabel#StatusBarClock {
     color: #E7EBF0;
     font-size: 12px;
-    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-family: "Helvetica", monospace;
 }
 
 QWidget#machine_info_panel{
@@ -175,7 +175,7 @@ QLabel#InfoAxisLetter{
 QLabel#InfoValue{
     font-size: 32px;
     font-weight: bold;
-    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-family: "Helvetica", monospace;
 }
 QLabel#InfoUnit{
     font-size: 12px;
@@ -484,4 +484,18 @@ QFrame#Card[variant="create_tool"]:hover {
    currently open, without changing the base Card look everywhere else. */
 QFrame#Card[expanded="true"] {
     border: 1px solid rgba(120, 155, 230, 0.55);
+}
+
+QLabel#ToolCardTitle {
+    font-family: "Helvetica";
+    font-size: 12px;
+    color: #8CA9C7;
+}
+
+/* Die eigentlichen Werte darunter */
+QLabel#ToolCardButtonLabel {
+    font-family: "Helvetica";
+    font-size: 16px;
+    color: #D6D6D6;
+    font-weight: bold;
 }

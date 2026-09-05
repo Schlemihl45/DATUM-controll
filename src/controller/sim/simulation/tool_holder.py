@@ -85,7 +85,7 @@ STANDARD_HOLDERS: dict[str, HolderProfile] = {
     "ER16": HolderProfile("ER16", "ER_COLLET", gauge_length=45.0, profile=[
         (0.0, 8.0), (15.0, 10.0), (18.0, 17.0), (45.0, 17.0),
     ]),
-    "SK30-Er25": HolderProfile("CUSTOM_42_50", "CUSTOM", gauge_length=55.0, profile=[
+    "SK30-ER25": HolderProfile("CUSTOM_42_50", "CUSTOM", gauge_length=55.0, profile=[
     (0.0, 18.0),   # Start bei Z=0.0 mit Radius 21 (D42)
         (2, 21),
     (20.0, 21.0),  # Hält den Radius 21 bis Z=20.0 (L20)
