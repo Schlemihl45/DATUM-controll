@@ -32,6 +32,7 @@ from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.page_stack import PageStack
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
+from controller.ui.widgets.workpiece_filter_bar import WorkpieceFilterBar
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
 
@@ -78,9 +79,9 @@ class _WorkpieceCard(Card):
         info = QVBoxLayout()
         info.setSpacing(2)
         self._name_lbl = ElidedLabel()
-        self._name_lbl.setObjectName("CardTitle")
+        self._name_lbl.setObjectName("WorkpieceCardName")
         self._sub_lbl = ElidedLabel()
-        self._sub_lbl.setObjectName("ToolCardButtonLabel")
+        self._sub_lbl.setObjectName("WorkpieceCardInfo")
         info.addWidget(self._name_lbl)
         info.addWidget(self._sub_lbl)
         info_widget = QWidget()
@@ -232,6 +233,9 @@ class WorkpiecesPage(QWidget):
         header.addWidget(self._sync_btn)
         root.addLayout(header)
 
+        self._filter_bar = WorkpieceFilterBar(self)
+        root.addWidget(self._filter_bar)
+
         self._list = _WorkpieceListView(self)
         root.addWidget(self._list, stretch=1)
 
@@ -239,9 +243,13 @@ class WorkpiecesPage(QWidget):
         self._list.workpiece_clicked.connect(self._on_workpiece_clicked)
         self._list.delete_requested.connect(self._on_delete_requested)
 
+        self._filter_bar.search_changed.connect(self._refresh_list)
+        self._filter_bar.sort_changed.connect(self._refresh_list)
+
         WorkpieceDatabaseSignals.instance().workpiece_changed.connect(self._reload)
 
         self._synced_once = False
+        self._all_workpieces: list[Workpiece] = []
         self._reload()
 
     def showEvent(self, event) -> None:
@@ -266,7 +274,22 @@ class WorkpiecesPage(QWidget):
         self._reload()
 
     def _reload(self, *_args) -> None:
-        self._list.set_workpieces(self._db.all_workpieces())
+        self._all_workpieces = self._db.all_workpieces()
+        self._refresh_list()
+
+    def _refresh_list(self, *_args) -> None:
+        workpieces = list(self._all_workpieces)
+        search = self._filter_bar.search_text()
+        if search:
+            workpieces = [w for w in workpieces if search in w.name.lower()]
+        key = self._filter_bar.sort_key()
+        if key == "created_at":
+            workpieces.sort(key=lambda w: w.created_at, reverse=True)
+        elif key == "modified_at":
+            workpieces.sort(key=lambda w: w.modified_at, reverse=True)
+        else:
+            workpieces.sort(key=lambda w: w.name.lower())
+        self._list.set_workpieces(workpieces)
 
     def _on_create_workpiece(self) -> None:
         """"New Workpiece" — per spec, this creates a real folder AND a DB
@@ -319,7 +342,18 @@ class WorkpiecesPage(QWidget):
 class WorkpiecesSection(QWidget):
     """The page registered in main_window.py's top-level QStackedWidget —
     hosts the whole Workpieces navigation hierarchy behind one PageStack.
-    See module docstring."""
+    See module docstring.
+
+    Also doubles as the `nav` object every page in the hierarchy holds a
+    reference to (WorkpiecesPage(nav=self), then passed on unchanged to
+    WorkpieceDetailPage/ProgramDetailPage) — so besides push/pop/can_pop/
+    reset, it carries load_in_machine_requested: ProgramDetailPage's "In
+    Maschine laden" button calls request_load_in_machine() on it without
+    knowing anything about MainWindow; main_window.py connects to the
+    signal once and does the actual MachinePage.load_file() + page switch.
+    """
+
+    load_in_machine_requested = Signal(str)   # gcode_path
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -333,6 +367,9 @@ class WorkpiecesSection(QWidget):
 
     def push(self, widget: QWidget, title: str) -> None:
         self._nav.push(widget, title)
+
+    def request_load_in_machine(self, gcode_path: str) -> None:
+        self.load_in_machine_requested.emit(gcode_path)
 
     def pop(self):
         return self._nav.pop()

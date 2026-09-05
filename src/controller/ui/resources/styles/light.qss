@@ -507,3 +507,36 @@ QLabel#DeprecatedBanner {
     padding: 6px 10px;
     font-weight: 600;
 }
+
+/* ToolCardTitle/ToolCardButtonLabel (tool_card_widget.py's collapsed
+   header, reused by program_detail_page.py's _ToolRow) previously had no
+   light-theme rule at all here — they silently fell back to Qt's default
+   label styling under the light theme. Added for parity with dark.qss. */
+QLabel#ToolCardTitle {
+    font-family: "Helvetica";
+    font-size: 12px;
+    color: #4A6080;
+}
+
+QLabel#ToolCardButtonLabel {
+    font-family: "Helvetica";
+    font-size: 16px;
+    color: #1E2D40;
+    font-weight: bold;
+}
+
+/* Workpiece/Operation/History cards — see dark.qss's identical rule for
+   why these are their own classes (name big+bold, info small+regular). */
+QLabel#WorkpieceCardName {
+    font-family: "Helvetica";
+    font-size: 17px;
+    font-weight: 700;
+    color: #1E2D40;
+}
+
+QLabel#WorkpieceCardInfo {
+    font-family: "Helvetica";
+    font-size: 11px;
+    font-weight: 400;
+    color: #4A6080;
+}

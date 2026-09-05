@@ -528,3 +528,25 @@ QLabel#ToolCardButtonLabel {
     color: #D6D6D6;
     font-weight: bold;
 }
+
+/* Workpiece/Operation/History cards (ui/pages/workpieces_page.py,
+   workpiece_detail_page.py, program_detail_page.py): the NAME is the
+   primary, most prominent line — big and bold — while dates/other info
+   sit below it, small and NOT bold. Deliberately their own pair of
+   classes rather than reusing CardTitle/ToolCardButtonLabel above: those
+   are the opposite emphasis (small caption vs. big bold value) for a
+   different widget family, and reusing them backwards here is exactly
+   the "inverted" look this pair replaces. */
+QLabel#WorkpieceCardName {
+    font-family: "Helvetica";
+    font-size: 17px;
+    font-weight: 700;
+    color: #E7EBF0;
+}
+
+QLabel#WorkpieceCardInfo {
+    font-family: "Helvetica";
+    font-size: 11px;
+    font-weight: 400;
+    color: #8CA9C7;
+}

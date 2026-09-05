@@ -23,3 +23,14 @@ def db_dir() -> Path:
     lives in. Callers are responsible for creating it (they already do,
     via Path(db_path).parent.mkdir(parents=True, exist_ok=True))."""
     return _REPO_ROOT / "data" / "db"
+
+
+# Default workpieces-sync root: <repo_root>/workpieces — the folder that
+# already ships the bundled example G-code (workpieces/Gcode.cnc, see
+# machine_page.py's old _DEFAULT_GCODE_PATH). Used by
+# AppSettings.workpieces_root_path as its default value so folder sync
+# (persistence/workpiece_sync.py) works out of the box on a fresh
+# checkout, without requiring manual configuration first. A relative,
+# repo-anchored path (not an OS-specific absolute one) so it resolves the
+# same way on every machine/OS this repo is cloned onto.
+DEFAULT_WORKPIECES_ROOT = _REPO_ROOT / "workpieces"

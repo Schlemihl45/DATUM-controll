@@ -7,7 +7,14 @@ Viewport area:
 
 G-code editor area:
   A QStackedWidget toggles between:
-    _GCODE_NO_FILE  — centred placeholder with workpieces icon + "Datei laden" button
+    _GCODE_NO_FILE  — centred placeholder with workpieces icon + "Datei laden" button,
+                      which no longer loads a fixed file itself: it emits
+                      open_workpieces_requested, and main_window.py switches the
+                      app over to the Workpieces page so the user picks a real
+                      program. load_file() (public) is what actually loads a
+                      chosen file back in here afterward — called from
+                      main_window.py when a ProgramDetailPage's "In Maschine
+                      laden" button (ui/pages/program_detail_page.py) fires.
     _GCODE_VIEWER   — GCodeViewer with the loaded G-code text
 
 Machine-state rules:
@@ -73,10 +80,6 @@ _LOG_LEVEL = {
 _GCODE_NO_FILE = 0
 _GCODE_VIEWER  = 1
 
-# Path to the example G-code file used as the default until a Workpieces page exists
-_REPO_ROOT          = Path(__file__).resolve().parents[4]
-_DEFAULT_GCODE_PATH = _REPO_ROOT / "workpieces" / "Gcode.cnc"
-
 
 # ── No-file placeholder for the G-code editor area ────────────────────────────
 
@@ -125,6 +128,12 @@ class _GCodeNoFileWidget(Card):
 class MachinePage(QWidget):
     """Machine page combining the 3D viewer, G-code preview and run controls."""
 
+    # Emitted by the "Datei laden" placeholder button — main_window.py
+    # switches the app to the Workpieces page in response (see module
+    # docstring). MachinePage itself no longer picks/loads any file on
+    # its own initiative.
+    open_workpieces_requested = Signal()
+
     def __init__(
         self,
         controller: MachineController,
@@ -157,7 +166,7 @@ class MachinePage(QWidget):
         self._gcode_stack = QStackedWidget(self)
 
         self._gcode_no_file = _GCodeNoFileWidget(self)
-        self._gcode_no_file.open_clicked.connect(self._load_example_file)
+        self._gcode_no_file.open_clicked.connect(self.open_workpieces_requested)
         self._gcode_stack.addWidget(self._gcode_no_file)   # _GCODE_NO_FILE
 
         self._gcode_view = GCodeViewer(self)
@@ -249,34 +258,28 @@ class MachinePage(QWidget):
 
     # ── File loading (no machine-state requirement) ───────────────────────────
 
-    def _load_example_file(self) -> None:
-        """Load the default example G-code file into the sim viewer.
-
-        No machine state is required for this — it only drives the visual
-        simulation. The machine Start button is separate and still requires
-        the machine to be ON, homed, and idle.
-
-        TODO: replace with Workpieces-page navigation once that page exists.
-        """
-        path = str(_DEFAULT_GCODE_PATH)
-        if not Path(path).exists():
-            logger.warning("Beispieldatei nicht gefunden: %s", path)
-            self._controller.error_occurred.emit(
-                MachineError(
-                    f"Beispieldatei nicht gefunden: {path}",
-                    ErrorSeverity.WARNING, source="MachinePage",
-                )
-            )
-            return
-        self._do_load_file(path)
-
-    def _do_load_file(self, path: str) -> None:
+    def load_file(self, path: str) -> None:
         """Load a G-code file into the sim viewer and G-code preview.
 
         Switches the G-code area to the viewer, populates it, and tells the
         3D sim to compile and display the program. Does NOT interact with the
         machine backend — no machine state is required.
+
+        Public: called by main_window.py in response to a
+        ProgramDetailPage's "In Maschine laden" button (see
+        ui.pages.workpieces_page.WorkpiecesSection.load_in_machine_requested)
+        — the only way a file reaches this page now that the old fixed
+        example-file button is gone (see open_workpieces_requested).
         """
+        if not Path(path).is_file():
+            logger.warning("G-Code-Datei nicht gefunden: %s", path)
+            self._controller.error_occurred.emit(
+                MachineError(
+                    f"G-Code-Datei nicht gefunden: {path}",
+                    ErrorSeverity.WARNING, source="MachinePage",
+                )
+            )
+            return
         self._loaded_path = path
         self._gcode_view.setPlainText(self._read_gcode_file(path))
         self._gcode_stack.setCurrentIndex(_GCODE_VIEWER)
@@ -362,8 +365,9 @@ class MachinePage(QWidget):
             return
 
         if self._loaded_path is None:
-            # Shouldn't happen (button is disabled), but guard anyway
-            self._load_example_file()
+            # Shouldn't happen (button is disabled), but guard anyway —
+            # send the user to pick a real program instead of guessing one.
+            self.open_workpieces_requested.emit()
             return
 
         tool_validation = validate_tools(self._sim.tool_changes, get_tool_by_pocket)

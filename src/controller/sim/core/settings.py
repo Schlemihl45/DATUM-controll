@@ -430,9 +430,19 @@ class AppSettings(QObject):
     def workpieces_root_path(self) -> str:
         """Root folder the Workpieces page syncs against — every direct
         subfolder becomes one Workpiece (see persistence/workpiece_sync.py).
-        Empty string (default) means sync is a no-op, same convention as
-        linuxcnc_tool_table_path."""
-        return self._qs.value("persistence/workpieces_root_path", "", type=str)
+
+        Defaults to persistence.paths.DEFAULT_WORKPIECES_ROOT
+        (<repo_root>/workpieces, where the bundled example G-code already
+        lives) rather than an empty no-op path, so sync works out of the
+        box; set an explicit value (an absolute path, or override this
+        default) to point it elsewhere."""
+        configured = self._qs.value("persistence/workpieces_root_path", "", type=str)
+        if configured:
+            return configured
+
+        from controller.persistence.paths import DEFAULT_WORKPIECES_ROOT
+
+        return str(DEFAULT_WORKPIECES_ROOT)
 
     @workpieces_root_path.setter
     def workpieces_root_path(self, v: str) -> None:
