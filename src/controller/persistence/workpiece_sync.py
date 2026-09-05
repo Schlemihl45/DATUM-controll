@@ -93,6 +93,41 @@ def sync_workpieces_root(db: WorkpieceDatabase | None = None) -> SyncResult:
     return result
 
 
+def sync_single_workpiece(workpiece_id: int, db: WorkpieceDatabase | None = None) -> SyncResult:
+    """Sync exactly one workpiece's own folder, regardless of whether it
+    sits under AppSettings.workpieces_root_path or not.
+
+    Used after a file is copied into a workpiece's folder via
+    WorkpieceDetailPage's "Load Programm" card (ui/pages/
+    workpiece_detail_page.py) — re-running the FULL sync_workpieces_root()
+    for that would not just be wasteful, it would actively miss a
+    workpiece created without a root configured (folder_path outside the
+    configured root entirely, see ui.pages.workpieces_page's
+    _unlinked_workpieces_dir()), since the root-wide sync only ever walks
+    that one configured root's direct subfolders."""
+    db = db or WorkpieceDatabase.instance()
+    result = SyncResult()
+
+    workpiece = db.get_workpiece(workpiece_id)
+    if workpiece is None:
+        result.errors.append(f"Werkstück {workpiece_id} nicht gefunden.")
+        return result
+
+    folder = Path(workpiece.folder_path)
+    if not folder.is_dir():
+        result.errors.append(f"Werkstück-Ordner nicht gefunden: {folder}")
+        return result
+
+    try:
+        _sync_one_workpiece_folder(db, folder, result)
+        result.workpieces_synced = 1
+    except OSError as exc:
+        logger.warning("Sync failed for %s", folder, exc_info=True)
+        result.errors.append(f"{folder.name}: {exc}")
+
+    return result
+
+
 def _sync_one_workpiece_folder(db: WorkpieceDatabase, folder: Path, result: SyncResult) -> None:
     workpiece = db.get_or_create_by_folder(str(folder))
     existing_by_path = {

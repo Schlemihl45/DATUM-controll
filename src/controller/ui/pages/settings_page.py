@@ -49,6 +49,10 @@ from controller.ui.pages.tools_settings_panel import (
     SECTION_ICONS as TOOLS_SECTION_ICONS,
     build_tools_sections,
 )
+from controller.ui.pages.workpieces_settings_panel import (
+    SECTION_ICONS as WORKPIECES_SECTION_ICONS,
+    build_workpieces_sections,
+)
 
 _NAV_ICON_SIZE = QSize(20, 20)
 _NAV_BTN_SIZE  = QSize(196, 44)   # horizontal: icon left, label right
@@ -235,10 +239,19 @@ class SettingsPage(QWidget):
         ]
         tools_page = _NavStack(tools_sections, parent=self)
 
+        workpieces_sections = [
+            (icon_name, label, widget)
+            for (icon_name, label), widget in zip(
+                WORKPIECES_SECTION_ICONS, build_workpieces_sections(self)
+            )
+        ]
+        workpieces_page = _NavStack(workpieces_sections, parent=self)
+
         outer_sections: list[tuple[str, str, QWidget]] = [
-            ("setup",     "General",    general_page),
-            ("scan-cube", "Simulation", simulation_page),
-            ("tools",     "Tools",      tools_page),
+            ("setup",      "General",    general_page),
+            ("scan-cube",  "Simulation", simulation_page),
+            ("tools",      "Tools",      tools_page),
+            ("workpieces", "Workpieces", workpieces_page),
         ]
         self._outer = _NavStack(
             outer_sections, btn_size=_OUTER_BTN_SIZE, icon_size=_OUTER_ICON_SIZE, parent=self,
