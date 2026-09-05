@@ -29,3 +29,8 @@ Thumbs.db
 # --- Local runtime databases (tools.db, workpieces.db, ...) ---
 # User/runtime data, not source — see persistence/paths.py.
 /data/db/
+
+# --- Workpiece folders created without a configured workpieces_root_path ---
+# See ui/pages/workpieces_page.py's _unlinked_workpieces_dir() — runtime
+# user data, not source, same reasoning as /data/db/ above.
+/data/workpieces_unlinked/

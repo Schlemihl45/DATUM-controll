@@ -137,6 +137,38 @@ class WorkpieceDatabase:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Discard a pre-rewrite `workpieces` table (the old schema: one
+        row 1:1-bound to a single gcode_path, no folder_path/notes/
+        modified_at columns, no operations table at all).
+
+        `CREATE TABLE IF NOT EXISTS` above is a no-op against an existing
+        table, so an old workpieces.db left over from before this module
+        was rewritten would otherwise keep its old columns forever and
+        crash on the first read (missing e.g. `folder_path`/`notes`).
+        There is deliberately no column-by-column migration here (unlike
+        tool_db.py's _migrate_schema()) — this schema change was
+        confirmed, before it was made, to discard rather than convert old
+        data (no operations, no versioning existed yet to convert to), so
+        detecting the old shape and starting fresh is the correct fix,
+        not a gap to fill in later.
+        """
+        existing_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(workpieces)")
+        }
+        if existing_columns and "folder_path" not in existing_columns:
+            logger.warning(
+                "%s has the pre-rewrite workpieces schema (no folder_path "
+                "column) - dropping and recreating; see module docstring, "
+                "this data was never migrated on purpose.",
+                self._db_path,
+            )
+            self._conn.execute("DROP TABLE IF EXISTS operations")
+            self._conn.execute("DROP TABLE IF EXISTS workpieces")
+            self._conn.executescript(_SCHEMA)
+            self._conn.commit()
 
     @staticmethod
     def _resolve_default_path() -> str:
@@ -448,7 +480,29 @@ class WorkpieceDatabase:
         return self.get_operation(saved.id)
 
     def delete_operation(self, operation_id: int) -> None:
-        self._conn.execute("DELETE FROM operations WHERE id = ?", (operation_id,))
+        """Delete *operation_id* AND every other version in its lineage
+        (same lineage_id).
+
+        Deliberately a whole-lineage delete, not a single-row one: an old
+        version is only ever reachable through its lineage's CURRENT
+        version's ProgramDetailPage (see operation_history()) — deleting
+        just the current row would leave its history permanently
+        orphaned (unreachable, but still in the DB) rather than actually
+        removed. It also sidesteps operations.previous_version_id's
+        foreign key: deleting an older version on its own, while a newer
+        one still points at it via previous_version_id, would raise a
+        FOREIGN KEY constraint failure (PRAGMA foreign_keys is ON) —
+        deleting the whole lineage in one statement removes both sides
+        together, which SQLite allows.
+        """
+        row = self._conn.execute(
+            "SELECT lineage_id FROM operations WHERE id = ?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            return
+        self._conn.execute(
+            "DELETE FROM operations WHERE lineage_id = ?", (row["lineage_id"],)
+        )
         self._conn.commit()
         WorkpieceDatabaseSignals.instance().operation_changed.emit(operation_id)
 

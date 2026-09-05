@@ -19,7 +19,7 @@ has loaded.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QScrollArea,
     QScroller, QSizePolicy, QVBoxLayout, QWidget,
@@ -27,13 +27,14 @@ from PySide6.QtWidgets import (
 
 from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
-from controller.sim.simulation.tool_definition import UNASSIGNED_POCKET
+from controller.sim.simulation.tool_definition import ToolType, UNASSIGNED_POCKET
 from controller.ui.widgets.card import Card
 from controller.ui.widgets.collapsible_section import CollapsibleSection
 from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.gcode_highlighter import GCodeHighlighter
 from controller.ui.widgets.gcode_viewer import GCodeViewer
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
+from controller.ui.widgets.tool_icons import tool_type_icon
 
 # Same fallback MachinePage uses: the real 3D sim widget if moderngl/numpy
 # are available, a text placeholder otherwise (see sim_placeholder.py).
@@ -58,10 +59,10 @@ class _AutoSaveTextEdit(QPlainTextEdit):
 
 
 class _ToolRow(Card):
-    """One used tool: name + a live "im Magazin" checkbox (read-only —
-    reflects ToolDatabase state, editing pocket assignment happens on
-    ToolPage, not here). No settings button, no expansion — see this
-    page's own requirement of a flat, non-expanding tool list."""
+    """One used tool, styled like ToolCardWidget's collapsed header (type
+    icon + pocket badge + name — see tool_card_widget.py) but flat: no
+    expansion, and a live "im Magazin" checkbox instead of the settings
+    button (pocket assignment itself still only happens on ToolPage)."""
 
     def __init__(self, tool_number: int, parent: QWidget | None = None) -> None:
         super().__init__(title=None, parent=parent)
@@ -71,13 +72,23 @@ class _ToolRow(Card):
         row = QHBoxLayout()
         row.setSpacing(10)
 
+        self._type_icon_lbl = QLabel()
+        self._type_icon_lbl.setFixedSize(40, 40)
+        row.addWidget(self._type_icon_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self._pocket_badge = QLabel()
+        self._pocket_badge.setObjectName("PocketBadge")
+        self._pocket_badge.setFixedSize(30, 22)
+        self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(self._pocket_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         self._name_lbl = ElidedLabel()
         self._name_lbl.setObjectName("ToolCardButtonLabel")
         row.addWidget(self._name_lbl, stretch=1)
 
         self._magazine_chk = QCheckBox("im Magazin")
         self._magazine_chk.setEnabled(False)
-        row.addWidget(self._magazine_chk)
+        row.addWidget(self._magazine_chk, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.content_layout.addLayout(row)
         self.refresh()
@@ -85,9 +96,17 @@ class _ToolRow(Card):
     def refresh(self) -> None:
         tool = ToolDatabase.instance().get_tool(self._tool_number)
         in_magazine = tool is not None and tool.pocket != UNASSIGNED_POCKET
-        name = (tool.name or tool.remark) if tool else ""
-        label = f"T{self._tool_number} — {name}" if name else f"T{self._tool_number} (unbekannt)"
-        self._name_lbl.set_full_text(label)
+
+        tool_type = tool.tool_type if tool is not None else ToolType.ENDMILL
+        icon_size = QSize(40, 40)
+        self._type_icon_lbl.setPixmap(tool_type_icon(tool_type, size=40).pixmap(icon_size))
+        self._pocket_badge.setText(str(tool.pocket) if in_magazine else "-")
+
+        if tool is not None:
+            self._name_lbl.set_full_text(tool.name or tool.remark or f"T{self._tool_number}")
+        else:
+            self._name_lbl.set_full_text(f"T{self._tool_number} (unbekannt)")
+
         self._magazine_chk.setChecked(in_magazine)
         self.setProperty("magazine", in_magazine)
         self.style().unpolish(self)
