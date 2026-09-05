@@ -7,10 +7,18 @@ Not a UI/pixel test — it asserts on backend/controller state.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from controller.core.backends.simulated import SimulatedBackend
 from controller.core.machine.controller import MachineController
 from controller.domain.models import ProgramState
 from controller.ui.main_window import _HOME_INDEX, _MACHINE_PAGE_INDEX, MainWindow
+
+# Bundled example G-code, still shipped in the repo for exactly this kind
+# of test — MachinePage itself no longer loads it automatically (see
+# MachinePage.open_workpieces_requested), so tests exercising the Start
+# button now load it explicitly first via the public load_file() API.
+_EXAMPLE_GCODE_PATH = str(Path(__file__).resolve().parents[1] / "workpieces" / "Gcode.cnc")
 
 
 def _make_window(machine_on: MachineController) -> MainWindow:
@@ -73,6 +81,7 @@ def test_start_button_runs_program_via_controller(qtbot, machine_on):
     qtbot.addWidget(win)
 
     machine_page = win._stack.widget(_MACHINE_PAGE_INDEX)
+    machine_page.load_file(_EXAMPLE_GCODE_PATH)
     machine_page._on_start_clicked()
     machine_on.poll_once()
 
@@ -81,3 +90,20 @@ def test_start_button_runs_program_via_controller(qtbot, machine_on):
     machine_page._on_stop_clicked()
     machine_on.poll_once()
     assert machine_on.program_state == ProgramState.PAUSED
+
+
+def test_load_file_button_requests_workpieces_navigation(qtbot, machine_on):
+    """MachinePage no longer loads a fixed file itself — clicking "Datei
+    laden" with nothing loaded yet must ask main_window.py to switch to
+    the Workpieces page instead (see MachinePage.open_workpieces_requested
+    and main_window.py's connection to it)."""
+    win = _make_window(machine_on)
+    qtbot.addWidget(win)
+
+    win._on_machine_btn_clicked()
+    machine_page = win._stack.widget(_MACHINE_PAGE_INDEX)
+    assert machine_page._loaded_path is None
+
+    machine_page._gcode_no_file.open_clicked.emit()
+
+    assert win._stack.currentIndex() == win._stack.indexOf(win._workpieces_section)

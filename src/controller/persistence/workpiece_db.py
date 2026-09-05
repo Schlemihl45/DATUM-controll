@@ -82,14 +82,21 @@ CREATE TABLE IF NOT EXISTS operations (
 """
 
 # T-address matcher for auto tool extraction (see workpiece_sync.py's
-# module docstring for the full sync flow this feeds into). Word-boundary
-# guarded so "T12" isn't matched inside a longer token; callers are
-# responsible for stripping comments first (see strip_gcode_comments())
-# so a T-address mentioned only in a comment is never counted, and for
-# not treating the M6 that follows a T-address specially — M6 executes
-# the pending tool change but carries no tool number of its own, so it
-# never produces a false match here.
-_T_ADDRESS_RE = re.compile(r"(?<![A-Za-z0-9])T(\d+)\b")
+# module docstring for the full sync flow this feeds into). The negative
+# lookbehind guards against matching "T12" inside a longer token (e.g. a
+# word ending in a letter right before the T); callers are responsible
+# for stripping comments first (see strip_gcode_comments()) so a
+# T-address mentioned only in a comment is never counted.
+#
+# Deliberately NO trailing \b after the digits: real G-code overwhelmingly
+# writes a tool change as "T2M6"/"T02M06" with no separator between the
+# T-address and the M6 that executes it, and a trailing \b would refuse
+# to match there at all (no word-boundary between a digit and the "M"
+# right after it) — an earlier version of this regex had exactly that \b
+# and silently produced zero matches on that whole class of files.
+# \d+ already delimits the number on its own (it stops at the first
+# non-digit), so no boundary assertion is needed after it.
+_T_ADDRESS_RE = re.compile(r"(?<![A-Za-z0-9])T(\d+)")
 
 
 class WorkpieceDatabaseSignals(QObject):

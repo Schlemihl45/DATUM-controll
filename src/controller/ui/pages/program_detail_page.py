@@ -1,8 +1,8 @@
 """
 ui/pages/program_detail_page.py — ProgramDetailPage: one Operation
 version — sim playback of its G-code, notes, used tools (checked live
-against the magazine), a collapsed G-code preview and a collapsed version
-history.
+against the magazine), an always-expanded G-code preview and a collapsed
+version history.
 
 Reached from WorkpieceDetailPage (clicking an operation card) or from
 another ProgramDetailPage's own history list (clicking an old version) —
@@ -21,13 +21,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QScrollArea,
-    QScroller, QSizePolicy, QVBoxLayout, QWidget,
+    QCheckBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QScrollArea, QScroller, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
 from controller.sim.simulation.tool_definition import ToolType, UNASSIGNED_POCKET
+from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
 from controller.ui.widgets.collapsible_section import CollapsibleSection
 from controller.ui.widgets.elided_label import ElidedLabel
@@ -133,10 +134,10 @@ class _HistoryRow(Card):
         info = QVBoxLayout()
         info.setSpacing(2)
         name_lbl = ElidedLabel()
-        name_lbl.setObjectName("CardTitle")
+        name_lbl.setObjectName("WorkpieceCardName")
         name_lbl.set_full_text(f"{operation.name} — v{operation.version}")
         sub_lbl = ElidedLabel()
-        sub_lbl.setObjectName("ToolCardButtonLabel")
+        sub_lbl.setObjectName("WorkpieceCardInfo")
         sub_lbl.set_full_text(
             f"Erstellt: {operation.created_at.strftime(_DATE_FMT)} · "
             f"Geändert: {operation.modified_at.strftime(_DATE_FMT)}"
@@ -157,9 +158,12 @@ class _HistoryRow(Card):
 
 class ProgramDetailPage(QWidget):
     """See module docstring. `nav` is anything exposing push(widget, title)
-    (see ui.pages.workpieces_page.WorkpiecesSection) — threaded through so
-    this page can push a new ProgramDetailPage for an old version onto the
-    very same navigation stack the caller used to reach this one."""
+    AND request_load_in_machine(gcode_path) (see
+    ui.pages.workpieces_page.WorkpiecesSection) — threaded through so this
+    page can push a new ProgramDetailPage for an old version onto the very
+    same navigation stack the caller used to reach this one, and so the
+    "In Maschine laden" button can reach all the way up to main_window.py
+    without this page knowing anything about MainWindow itself."""
 
     def __init__(self, operation_id: int, nav, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -199,10 +203,10 @@ class ProgramDetailPage(QWidget):
 
         header_form = QVBoxLayout()
         self._name_lbl = ElidedLabel()
-        self._name_lbl.setObjectName("CardTitle")
+        self._name_lbl.setObjectName("WorkpieceCardName")
         header_form.addWidget(self._name_lbl)
         self._dates_lbl = QLabel()
-        self._dates_lbl.setObjectName("ToolCardButtonLabel")
+        self._dates_lbl.setObjectName("WorkpieceCardInfo")
         header_form.addWidget(self._dates_lbl)
         header_row.addLayout(header_form, stretch=1)
         header.content_layout.addLayout(header_row)
@@ -223,15 +227,12 @@ class ProgramDetailPage(QWidget):
             pass
         col.addWidget(self._sim)
 
-        # ── Collapsed G-code preview ─────────────────────────────────────────
-        self._gcode_section = CollapsibleSection("G-Code")
-        gcode_layout = QVBoxLayout(self._gcode_section.body)
-        gcode_layout.setContentsMargins(0, 4, 0, 0)
+        # ── G-code preview (always expanded — no collapse option) ────────────
+        col.addWidget(QLabel("G-Code"))
         self._gcode_view = GCodeViewer()
         self._gcode_view.setMinimumHeight(240)
         self._gcode_highlighter = GCodeHighlighter(self._gcode_view.text_edit.document())
-        gcode_layout.addWidget(self._gcode_view)
-        col.addWidget(self._gcode_section)
+        col.addWidget(self._gcode_view)
 
         # ── Used tools (flat list, magazine checkbox) ───────────────────────
         col.addWidget(QLabel("Verwendete Werkzeuge"))
@@ -249,6 +250,17 @@ class ProgramDetailPage(QWidget):
         col.addWidget(self._history_section)
 
         col.addStretch(1)
+
+        # ── Load into MachinePage (bottom-right) ─────────────────────────────
+        self._load_btn = QPushButton(" In Maschine laden")
+        self._load_btn.setIcon(get_icon("machine", tint=True))
+        self._load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._load_btn.setMinimumHeight(40)
+        self._load_btn.clicked.connect(self._on_load_in_machine_clicked)
+        load_row = QHBoxLayout()
+        load_row.addStretch(1)
+        load_row.addWidget(self._load_btn)
+        col.addLayout(load_row)
 
         ToolDatabaseSignals.instance().tool_changed.connect(self._on_tool_changed)
         WorkpieceDatabaseSignals.instance().operation_changed.connect(self._on_operation_changed)
@@ -274,6 +286,11 @@ class ProgramDetailPage(QWidget):
         if not self._notes_edit.hasFocus():
             self._notes_edit.setPlainText(op.notes)
         self._loading = False
+
+        self._load_btn.setEnabled(not op.file_missing)
+        self._load_btn.setToolTip(
+            "G-Code-Datei fehlt auf der Festplatte." if op.file_missing else ""
+        )
 
         if op.gcode_path:
             try:
@@ -340,6 +357,15 @@ class ProgramDetailPage(QWidget):
             return
         self._operation.notes = self._notes_edit.toPlainText()
         self._db.upsert_operation(self._operation)
+
+    def _on_load_in_machine_clicked(self) -> None:
+        """Load this operation version's G-code into MachinePage and
+        switch the app over to it — see WorkpiecesSection.request_load_in_machine()
+        (ui.pages.workpieces_page), which `nav` (the same object threaded
+        through this whole page hierarchy) forwards up to main_window.py."""
+        if self._operation is None or self._operation.file_missing:
+            return
+        self._nav.request_load_in_machine(self._operation.gcode_path)
 
 
 def _read_gcode_text(path: str) -> str:

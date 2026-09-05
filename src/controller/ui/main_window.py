@@ -143,6 +143,15 @@ class MainWindow(QMainWindow):
         self._workpieces_section = WorkpiecesSection(self)
         self._stack.addWidget(self._workpieces_section)         # _WORKPIECES_INDEX
 
+        # MachinePage's "Datei laden" button no longer loads a fixed file —
+        # it sends the user to the Workpieces page to pick a real program;
+        # a ProgramDetailPage's "In Maschine laden" button closes the loop
+        # by loading that file back into MachinePage and switching to it.
+        self._machine_page.open_workpieces_requested.connect(self._on_workpieces_btn_clicked)
+        self._workpieces_section.load_in_machine_requested.connect(
+            self._on_load_in_machine_requested
+        )
+
         # Register viewport with ThemeManager for gradient sync
         if theme_manager is not None:
             try:
@@ -256,6 +265,15 @@ class MainWindow(QMainWindow):
             return
         self._workpieces_section.reset()
         self._stack.setCurrentIndex(_HOME_INDEX)
+
+    def _on_load_in_machine_requested(self, gcode_path: str) -> None:
+        """A ProgramDetailPage's "In Maschine laden" button fired (see
+        WorkpiecesSection.load_in_machine_requested) — load that file into
+        MachinePage and switch to it, closing the loop MachinePage's own
+        "Datei laden" button opened (open_workpieces_requested, connected
+        above)."""
+        self._machine_page.load_file(gcode_path)
+        self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:
         """Feed Hold only makes sense — and is only shown — while a
