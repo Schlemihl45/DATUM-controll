@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
+from controller.sim.simulation.tool_definition import UNASSIGNED_POCKET
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.program_detail_page import ProgramDetailPage
 from controller.ui.widgets.card import Card
@@ -75,7 +76,7 @@ class _OperationCard(Card):
         row.addWidget(info_widget, stretch=1)
 
         self._wizard_btn = QToolButton()
-        self._wizard_btn.setIcon(get_icon("scan-cube", tint=True))
+        self._wizard_btn.setIcon(get_icon("wand", tint=True))
         self._wizard_btn.setIconSize(QSize(18, 18))
         self._wizard_btn.setFixedSize(32, 32)
         self._wizard_btn.setToolTip("Setup-Assistent")
@@ -122,6 +123,7 @@ class _OperationCard(Card):
         box.setWindowTitle("Programm löschen")
         box.setText(
             "Programm wirklich löschen?\n"
+            "Alle älteren Versionen dieses Programms werden mitgelöscht.\n"
             "Diese Aktion kann nicht rückgängig gemacht werden."
         )
         delete_btn = box.addButton("Löschen", QMessageBox.ButtonRole.DestructiveRole)
@@ -133,9 +135,10 @@ class _OperationCard(Card):
 
 
 class _UsedToolRow(QWidget):
-    """One row in the collapsed "used tools" section — name + a magazine
-    status label, resolved against ToolDatabase (no editing here, see
-    ToolPage for that)."""
+    """One row in the collapsed "used tools" section — a pocket badge
+    (same PocketBadge style ToolPage uses) + name + magazine status,
+    resolved against ToolDatabase (no editing here, see ToolPage for
+    that)."""
 
     def __init__(self, tool_number: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -143,19 +146,29 @@ class _UsedToolRow(QWidget):
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+
+        self._pocket_badge = QLabel()
+        self._pocket_badge.setObjectName("PocketBadge")
+        self._pocket_badge.setFixedSize(30, 22)
+        self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row.addWidget(self._pocket_badge)
+
         self._label = QLabel()
+        self._label.setObjectName("ToolCardButtonLabel")
         row.addWidget(self._label, stretch=1)
         self.refresh()
 
     def refresh(self) -> None:
-        from controller.sim.simulation.tool_definition import UNASSIGNED_POCKET
-
         tool = ToolDatabase.instance().get_tool(self._tool_number)
         if tool is None:
+            self._pocket_badge.setText("-")
             self._label.setText(f"T{self._tool_number} — nicht in der Werkzeugdatenbank")
             return
-        status = f"P{tool.pocket}" if tool.pocket != UNASSIGNED_POCKET else "nicht im Magazin"
+        in_magazine = tool.pocket != UNASSIGNED_POCKET
+        self._pocket_badge.setText(str(tool.pocket) if in_magazine else "-")
         name = tool.name or tool.remark or f"T{self._tool_number}"
+        status = "im Magazin" if in_magazine else "nicht im Magazin"
         self._label.setText(f"T{self._tool_number} — {name} ({status})")
 
 
@@ -190,7 +203,8 @@ class WorkpieceDetailPage(QWidget):
         header = Card(title=None)
         header_row = QHBoxLayout()
         header_row.setSpacing(12)
-        header_row.addWidget(PreviewThumbnail(size=56))
+        self._thumb = PreviewThumbnail(size=56)
+        header_row.addWidget(self._thumb)
 
         header_col = QVBoxLayout()
         self._name_lbl = ElidedLabel()
@@ -252,6 +266,7 @@ class WorkpieceDetailPage(QWidget):
         self._time_lbl.setText(
             f"Geschätzte Gesamtzeit: {_format_hms(workpiece.estimated_total_time)}"
         )
+        self._thumb.set_material_hint(workpiece.material)
 
         self._loading = True
         if not self._notes_edit.hasFocus():

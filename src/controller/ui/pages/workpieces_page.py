@@ -12,7 +12,8 @@ to know how deep the hierarchy underneath actually is.
 """
 from __future__ import annotations
 
-import uuid
+import re
+from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 from controller.domain.models import Workpiece
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
 from controller.persistence.workpiece_sync import sync_workpieces_root
+from controller.sim.core.settings import AppSettings
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.workpiece_detail_page import WorkpieceDetailPage
 from controller.ui.widgets.card import Card
@@ -32,6 +34,11 @@ from controller.ui.widgets.page_stack import PageStack
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
+
+# Filesystem characters invalid on at least one of Windows/Linux/macOS —
+# a typed workpiece name is sanitized into a real folder name with this
+# rather than rejecting the input outright.
+_INVALID_FOLDER_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 class _CreateWorkpieceCard(CardButton):
@@ -100,6 +107,7 @@ class _WorkpieceCard(Card):
             f"Geändert: {workpiece.modified_at.strftime(_DATE_FMT)}"
         )
         self._thumb.set_preview_source("", None)
+        self._thumb.set_material_hint(workpiece.material)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -216,7 +224,7 @@ class WorkpiecesPage(QWidget):
         header.addStretch(1)
 
         self._sync_btn = QToolButton()
-        self._sync_btn.setIcon(get_icon("reset", tint=True))
+        self._sync_btn.setIcon(get_icon("sync", tint=True))
         self._sync_btn.setIconSize(QSize(20, 20))
         self._sync_btn.setToolTip("Ordner synchronisieren")
         self._sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -261,18 +269,42 @@ class WorkpiecesPage(QWidget):
         self._list.set_workpieces(self._db.all_workpieces())
 
     def _on_create_workpiece(self) -> None:
+        """"New Workpiece" — per spec, this creates a real folder AND a DB
+        entry, not a DB-only stand-in. If AppSettings.workpieces_root_path
+        is configured, the folder is created there, so the next sync pass
+        picks it up like any other workpiece folder. If no root is
+        configured yet (empty by default — see AppSettings.workpieces_root_path),
+        the folder is still created, just under this app's own local data
+        directory (see persistence/paths.py's db_dir(), same "developer/
+        user can actually find it" reasoning), and the user is told so —
+        it silently participates in sync once a root is set."""
         name, ok = QInputDialog.getText(self, "Neues Werkstück", "Name:")
-        if not ok or not name.strip():
+        name = name.strip() if ok else ""
+        if not name:
             return
-        # No folder chosen yet (this flow doesn't offer one) — a unique
-        # placeholder anchor avoids colliding with the folder_path UNIQUE
-        # constraint. TODO: once a folder-picker exists for manual
-        # creation, point this at a real subfolder of
-        # AppSettings.workpieces_root_path instead.
-        placeholder_folder = f"__manual__/{uuid.uuid4()}"
-        workpiece = self._db.upsert_workpiece(
-            Workpiece(name=name.strip(), folder_path=placeholder_folder)
-        )
+
+        root = AppSettings.instance().workpieces_root_path
+        base_dir = Path(root) if root else _unlinked_workpieces_dir()
+        folder = _unique_workpiece_folder(base_dir, name)
+        try:
+            folder.mkdir(parents=True, exist_ok=False)
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Werkstück anlegen fehlgeschlagen",
+                f"Der Ordner konnte nicht angelegt werden:\n{folder}\n\n{exc}",
+            )
+            return
+
+        if not root:
+            QMessageBox.information(
+                self, "Kein Wurzelordner konfiguriert",
+                "Es ist noch kein Werkstück-Wurzelordner konfiguriert.\n\n"
+                f"Das Werkstück wurde lokal unter\n{folder}\nangelegt und "
+                "nimmt automatisch am Ordner-Sync teil, sobald ein "
+                "Wurzelordner eingestellt ist.",
+            )
+
+        workpiece = self._db.get_or_create_by_folder(str(folder), default_name=name)
         self._on_workpiece_clicked(workpiece.id)
 
     def _on_workpiece_clicked(self, workpiece_id: int) -> None:
@@ -314,3 +346,32 @@ class WorkpiecesSection(QWidget):
     @property
     def current_title(self) -> str:
         return self._nav.current_title
+
+
+def _unlinked_workpieces_dir() -> Path:
+    """Fallback location for a manually-created workpiece folder when no
+    AppSettings.workpieces_root_path is configured yet — a sibling of
+    persistence/paths.py's db_dir(), for the same "a developer/user can
+    actually find it without knowing OS conventions" reasoning that
+    module's own docstring gives for data/db/."""
+    from controller.persistence.paths import db_dir
+
+    return db_dir().parent / "workpieces_unlinked"
+
+
+def _sanitize_folder_name(name: str) -> str:
+    cleaned = _INVALID_FOLDER_CHARS_RE.sub("_", name).strip().strip(".")
+    return cleaned or "Werkstueck"
+
+
+def _unique_workpiece_folder(base_dir: Path, name: str) -> Path:
+    """base_dir/<sanitized name>, or base_dir/<sanitized name>_2, _3, ...
+    the first one that doesn't already exist — so two workpieces named
+    the same never collide on disk."""
+    slug = _sanitize_folder_name(name)
+    candidate = base_dir / slug
+    counter = 2
+    while candidate.exists():
+        candidate = base_dir / f"{slug}_{counter}"
+        counter += 1
+    return candidate
