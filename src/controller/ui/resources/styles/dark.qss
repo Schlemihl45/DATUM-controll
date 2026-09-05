@@ -486,6 +486,35 @@ QFrame#Card[expanded="true"] {
     border: 1px solid rgba(120, 155, 230, 0.55);
 }
 
+/* ProgramDetailPage: a used tool's row (_ToolRow) toggles this "magazine"
+   property to a dezent (subtle) green whenever ToolDatabaseSignals says the
+   tool currently sits in a magazine pocket — kept separate from the
+   [expanded] accent above, an unrelated concept (open/closed vs. in the
+   magazine or not). */
+QFrame#Card[magazine="true"] {
+    background: rgba(99, 153, 34, 0.14);
+    border: 1px solid rgba(99, 153, 34, 0.45);
+}
+
+/* WorkpieceDetailPage: an operation card whose G-code file is missing on
+   disk (see domain.models.Operation.file_missing) — must never look like
+   a normal card, so a visible amber warning border, same color as the
+   status bar's own warning severity. */
+QFrame#Card[file_missing="true"] {
+    border: 1px solid rgba(255, 176, 32, 0.7);
+}
+
+/* ProgramDetailPage: banner shown when viewing a superseded (is_current
+   == False) operation version, reached via the version-history list. */
+QLabel#DeprecatedBanner {
+    background: rgba(255, 176, 32, 0.18);
+    color: #FFB020;
+    border: 1px solid rgba(255, 176, 32, 0.5);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-weight: 600;
+}
+
 QLabel#ToolCardTitle {
     font-family: "Helvetica";
     font-size: 12px;

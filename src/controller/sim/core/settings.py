@@ -53,6 +53,7 @@ class AppSettings(QObject):
     tool_db_path_changed             = Signal(str)
     workpiece_db_path_changed        = Signal(str)
     linuxcnc_tool_table_path_changed = Signal(str)
+    workpieces_root_path_changed     = Signal(str)
 
     # Stock-shape signals (any change requires a sim rebuild)
     stock_shape_changed         = Signal(str)
@@ -424,6 +425,19 @@ class AppSettings(QObject):
     def linuxcnc_tool_table_path(self, v: str) -> None:
         self._qs.setValue("persistence/linuxcnc_tool_table_path", v)
         self.linuxcnc_tool_table_path_changed.emit(v)
+
+    @property
+    def workpieces_root_path(self) -> str:
+        """Root folder the Workpieces page syncs against — every direct
+        subfolder becomes one Workpiece (see persistence/workpiece_sync.py).
+        Empty string (default) means sync is a no-op, same convention as
+        linuxcnc_tool_table_path."""
+        return self._qs.value("persistence/workpieces_root_path", "", type=str)
+
+    @workpieces_root_path.setter
+    def workpieces_root_path(self, v: str) -> None:
+        self._qs.setValue("persistence/workpieces_root_path", v)
+        self.workpieces_root_path_changed.emit(v)
 
     # ── Stock shape settings ───────────────────────────────────────────────────
 

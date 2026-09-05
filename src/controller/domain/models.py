@@ -180,33 +180,93 @@ class Operation:
         Op 1: Mill side A
         Op 2: Mill side B
         Op 3: Chamfer corners
+
+    Colloquially, users call this a "Programm" (1 object = 1 G-code file =
+    1 clamping/setup) — the class keeps its existing name to avoid a
+    collision with ProgramState/ProgramInfoCard, which describe the
+    program currently loaded/running on the MACHINE, an unrelated concept.
+
+    Versioning: an Operation's G-code file can change over time (re-edited,
+    re-posted from CAM). Every distinct file content is its own row —
+    lineage_id ties all versions of the "same" operation together (it's
+    the id of that family's very first version), previous_version_id
+    threads them into a history, and is_current marks the one version
+    that's actually in use today. See persistence.workpiece_db's
+    create_new_version() for how a new version is produced.
     """
     id: int
     workpiece_id: int
     name: str
+    lineage_id: int
     gcode_path: str = ""
-    tools: list[int] = field(default_factory=list)
     clamping_description: str = ""
     zero_point_notes: str = ""
     notes: str = ""
     estimated_time: float = 0.0
     created_at: datetime = field(default_factory=datetime.now)
 
+    version: int = 1
+    previous_version_id: int | None = None
+    is_current: bool = True
+    file_hash: str = ""
+
+    # Tool numbers used by this operation. tools_auto is parsed out of the
+    # G-code text on sync (see persistence.workpiece_sync); tools_manual
+    # holds numbers a user added by hand (e.g. a manual tool change not
+    # expressed as a plain T-address) and is left untouched by every sync.
+    # `tools` below is the single place these two are combined — NOT a
+    # separately stored field, so there is exactly one source of truth for
+    # each half of it.
+    tools_auto: list[int] = field(default_factory=list)
+    tools_manual: list[int] = field(default_factory=list)
+
+    modified_at: datetime = field(default_factory=datetime.now)
+
+    # Placeholder for a future rendered preview image ("", "sim", "step").
+    # No rendering exists yet — see ui/widgets/preview_thumbnail.py.
+    preview_source: str = ""
+
+    @property
+    def tools(self) -> list[int]:
+        """Union of tools_manual and tools_auto — manual entries first,
+        then auto-parsed ones not already present, de-duplicated."""
+        combined = list(self.tools_manual)
+        for t in self.tools_auto:
+            if t not in combined:
+                combined.append(t)
+        return combined
+
     @property
     def is_ready(self) -> bool:
-        return bool(self.gcode_path) and len(self.tools) >0
+        return bool(self.gcode_path) and len(self.tools) > 0
 
     @property
     def gcode_filename(self) -> str:
         from pathlib import Path
         return Path(self.gcode_path).name if self.gcode_path else ""
 
+    @property
+    def file_missing(self) -> bool:
+        """True if this operation's gcode_path no longer exists on disk.
+        Computed at runtime, never persisted — see workpiece_sync.py,
+        which sets this implicitly by simply not touching the DB row for a
+        file it can't find; the row (and this check) is what surfaces that
+        to the UI."""
+        from pathlib import Path
+        return bool(self.gcode_path) and not Path(self.gcode_path).is_file()
+
     def add_tool(self, number: int) -> None:
+        """Add *number* as a manually-assigned tool. Auto-parsed tools are
+        managed exclusively by the sync pass (see workpiece_sync.py) —
+        never appended to here."""
         if number not in self.tools:
-            self.tools.append(number)
+            self.tools_manual.append(number)
 
     def remove_tool(self, number: int) -> None:
-        self.tools = [t for t in self.tools if t != number]
+        """Remove *number* from the manual list. A tool that's also
+        auto-parsed from the G-code (tools_auto) reappears on the next
+        sync — this only ever affects the manual override."""
+        self.tools_manual = [t for t in self.tools_manual if t != number]
 
 # ---------------------------------------------------------------------------
 # Workpiece - the complete physical part with all operations
@@ -227,14 +287,17 @@ class Workpiece:
     material: str = ""
     description: str = ""
     drawing_number: str = ""
+    notes: str = ""
     operations: list[Operation] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
+    modified_at: datetime = field(default_factory=datetime.now)
 
-    # G-code file this workpiece is associated with. There is no "create a
-    # workpiece" UI yet (see persistence.workpiece_db.WorkpieceDatabase) —
-    # the loaded file's path is, for now, the only stable identifier a
-    # simulated program can key a Workpiece record off of.
-    gcode_path: str | None = None
+    # Sync anchor: the workpiece's folder under AppSettings.workpieces_root_path
+    # (see persistence.workpiece_sync) — one direct subfolder = one Workpiece.
+    # Empty for a workpiece created outside the folder sync (e.g. ad-hoc via
+    # WorkpieceDatabase.get_or_create_by_path() for a file loaded from
+    # anywhere on disk).
+    folder_path: str = ""
 
     # Per-workpiece override for AppSettings.collision_detection_enabled:
     # None = inherit the global setting, True/False = explicit override.
@@ -254,6 +317,17 @@ class Workpiece:
     @property
     def is_ready(self) -> bool:
         return len(self.operations) > 0 and all(op.is_ready for op in self.operations)
+
+    @property
+    def estimated_total_time(self) -> float:
+        """Sum of estimated_time over all CURRENT (is_current) operations.
+
+        This is an ESTIMATE, derived purely from the operations' own
+        estimated_time — never actual/measured runtime. Actual run times
+        belong exclusively to Job/telemetry, per the existing architecture
+        split; the UI must always label this as an estimate, never as an
+        elapsed/actual time."""
+        return sum(op.estimated_time for op in self.operations if op.is_current)
 
     def add_operation(self, operation: Operation) -> None:
         self.operations.append(operation)

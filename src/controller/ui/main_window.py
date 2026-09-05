@@ -32,6 +32,7 @@ from controller.ui.icon_loader import get_icon
 from controller.ui.pages.machine_page import MachinePage
 from controller.ui.pages.settings_page import SettingsPage
 from controller.ui.pages.tool_page import ToolPage
+from controller.ui.pages.workpieces_page import WorkpiecesSection
 from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.machine_info_cards import (
     AxisPositionCard,
@@ -50,6 +51,7 @@ _HOME_INDEX         = 0
 _MACHINE_PAGE_INDEX = 1
 _SETTINGS_INDEX     = 2
 _TOOLS_PAGE_INDEX   = 3
+_WORKPIECES_INDEX   = 4
 
 _NAV_ICON_SIZE = QSize(256, 256)
 
@@ -108,7 +110,7 @@ class MainWindow(QMainWindow):
         programs_page_btn = _nav_button("workpieces")
         statistics_page_btn = _nav_button("statistics")
         settings_page_btn = _nav_button("settings")
-        for btn in (setup_page_btn, programs_page_btn, statistics_page_btn):
+        for btn in (setup_page_btn, statistics_page_btn):
             btn.setEnabled(False)
             btn.setToolTip("Noch nicht implementiert")
 
@@ -122,6 +124,7 @@ class MainWindow(QMainWindow):
         machine_page_btn.clicked.connect(self._on_machine_btn_clicked)
         tools_page_btn.clicked.connect(self._on_tools_btn_clicked)
         settings_page_btn.clicked.connect(self._on_settings_btn_clicked)
+        programs_page_btn.clicked.connect(self._on_workpieces_btn_clicked)
 
         # Build pages
         self._machine_page = MachinePage(controller, self)
@@ -136,6 +139,9 @@ class MainWindow(QMainWindow):
 
         self._tools_page = ToolPage(self)
         self._stack.addWidget(self._tools_page)                 # _TOOLS_PAGE_INDEX
+
+        self._workpieces_section = WorkpiecesSection(self)
+        self._stack.addWidget(self._workpieces_section)         # _WORKPIECES_INDEX
 
         # Register viewport with ThemeManager for gradient sync
         if theme_manager is not None:
@@ -228,7 +234,27 @@ class MainWindow(QMainWindow):
     def _on_tools_btn_clicked(self) -> None:
         self._stack.setCurrentIndex(_TOOLS_PAGE_INDEX)
 
+    def _on_workpieces_btn_clicked(self) -> None:
+        # Always enter fresh at the workpiece list — see
+        # WorkpiecesSection.reset(), called on the way back out below, so
+        # this reset() here is mostly a defensive no-op for entries that
+        # somehow bypassed the return button.
+        self._workpieces_section.reset()
+        self._stack.setCurrentIndex(_WORKPIECES_INDEX)
+
     def _on_return_clicked(self) -> None:
+        # The Workpieces section owns its own navigation stack (list ->
+        # WorkpieceDetailPage -> ProgramDetailPage, ...) — while it's not
+        # at its base page, Return steps back one level in THAT stack
+        # instead of jumping straight to Home. Every other page still
+        # jumps to Home directly, exactly as before.
+        if (
+            self._stack.currentWidget() is self._workpieces_section
+            and self._workpieces_section.can_pop()
+        ):
+            self._workpieces_section.pop()
+            return
+        self._workpieces_section.reset()
         self._stack.setCurrentIndex(_HOME_INDEX)
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:

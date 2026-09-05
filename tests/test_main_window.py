@@ -38,9 +38,10 @@ def test_unimplemented_pages_are_disabled_not_faked(qtbot, machine_on):
     card_buttons = [
         w for w in home_page.findChildren(type(win.light_btn))
     ]
-    # 6 nav buttons total: Machine (enabled) + 5 placeholders (disabled)
+    # 6 nav buttons total: Machine, Tools, Workpieces (enabled) +
+    # Setup, Statistics (disabled placeholders) + Settings (enabled).
     disabled = [b for b in card_buttons if not b.isEnabled()]
-    assert len(disabled) == 5
+    assert len(disabled) == 2
 
 
 def test_coolant_button_wires_to_flood_on_off(qtbot, machine_on, backend: SimulatedBackend):
