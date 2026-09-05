@@ -22,12 +22,12 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
-    QScrollArea, QScroller, QSizePolicy, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
-from controller.sim.simulation.tool_definition import ToolType, UNASSIGNED_POCKET
+from controller.sim.simulation.tool_definition import ToolType
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
 from controller.ui.widgets.collapsible_section import CollapsibleSection
@@ -60,14 +60,22 @@ class _AutoSaveTextEdit(QPlainTextEdit):
 
 
 class _ToolRow(Card):
-    """One used tool, styled like ToolCardWidget's collapsed header (type
-    icon + pocket badge + name — see tool_card_widget.py) but flat: no
-    expansion, and a live "im Magazin" checkbox instead of the settings
-    button (pocket assignment itself still only happens on ToolPage)."""
+    """One pocket referenced by a T-address in this operation's G-code,
+    styled like ToolCardWidget's collapsed header (type icon + pocket
+    badge + name — see tool_card_widget.py) but flat: no expansion, and a
+    live "im Magazin" checkbox instead of the settings button.
 
-    def __init__(self, tool_number: int, parent: QWidget | None = None) -> None:
+    A T-address in G-code selects a MAGAZINE POCKET, not a persistent
+    ToolDefinition.tool_number identity (see gcode/compiler.py's
+    ToolChange.pocket_number docstring, and MachinePage's own
+    validate_tools(..., get_tool_by_pocket) which already relies on this)
+    — so the numbers parsed into Operation.tools are pocket numbers, and
+    this resolves them via ToolDatabase.get_tool_by_pocket(), never
+    get_tool()."""
+
+    def __init__(self, pocket: int, parent: QWidget | None = None) -> None:
         super().__init__(title=None, parent=parent)
-        self._tool_number = tool_number
+        self._pocket = pocket
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         row = QHBoxLayout()
@@ -81,6 +89,7 @@ class _ToolRow(Card):
         self._pocket_badge.setObjectName("PocketBadge")
         self._pocket_badge.setFixedSize(30, 22)
         self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pocket_badge.setText(str(pocket))
         row.addWidget(self._pocket_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._name_lbl = ElidedLabel()
@@ -95,21 +104,20 @@ class _ToolRow(Card):
         self.refresh()
 
     def refresh(self) -> None:
-        tool = ToolDatabase.instance().get_tool(self._tool_number)
-        in_magazine = tool is not None and tool.pocket != UNASSIGNED_POCKET
+        tool = ToolDatabase.instance().get_tool_by_pocket(self._pocket)
+        occupied = tool is not None
 
         tool_type = tool.tool_type if tool is not None else ToolType.ENDMILL
         icon_size = QSize(40, 40)
         self._type_icon_lbl.setPixmap(tool_type_icon(tool_type, size=40).pixmap(icon_size))
-        self._pocket_badge.setText(str(tool.pocket) if in_magazine else "-")
 
         if tool is not None:
-            self._name_lbl.set_full_text(tool.name or tool.remark or f"T{self._tool_number}")
+            self._name_lbl.set_full_text(tool.name or tool.remark or f"Pocket {self._pocket}")
         else:
-            self._name_lbl.set_full_text(f"T{self._tool_number} (unbekannt)")
+            self._name_lbl.set_full_text(f"Pocket {self._pocket} — leer")
 
-        self._magazine_chk.setChecked(in_magazine)
-        self.setProperty("magazine", in_magazine)
+        self._magazine_chk.setChecked(occupied)
+        self.setProperty("magazine", occupied)
         self.style().unpolish(self)
         self.style().polish(self)
 
@@ -156,6 +164,42 @@ class _HistoryRow(Card):
         super().mousePressEvent(event)
 
 
+class _PageScrollArea(QScrollArea):
+    """This page's own outer scroll area.
+
+    Deliberately does NOT grab a QScroller touch gesture (unlike most
+    scrollable lists elsewhere in the app, e.g. tool_list_card.py's
+    ToolListView): a gesture grabbed on the whole viewport competes with
+    the sim widget's own mouse-drag camera controls
+    (Viewport.mousePressEvent/mouseMoveEvent in sim/ui/viewport.py) and
+    can hijack a camera-rotate/pan drag into a page-scroll instead — this
+    is what caused "moving the camera also scrolls the page". Plain
+    wheel/scrollbar scrolling still works fine without QScroller.
+
+    Also blocks wheel events entirely whenever the cursor is over one of
+    the registered no-scroll widgets (the sim widget, the G-code viewer):
+    QAbstractScrollArea's own wheelEvent() forwards an unconsumed wheel
+    event to ITS parent once its own content can't scroll further (e.g.
+    the G-code preview scrolled to its last line, or the sim widget's own
+    wheel-zoom) — which would otherwise scroll this page too.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._no_scroll_widgets: list[QWidget] = []
+
+    def add_no_scroll_widget(self, widget: QWidget) -> None:
+        self._no_scroll_widgets.append(widget)
+
+    def wheelEvent(self, event) -> None:
+        pos = event.globalPosition().toPoint()
+        for widget in self._no_scroll_widgets:
+            if widget.isVisible() and widget.rect().contains(widget.mapFromGlobal(pos)):
+                event.accept()
+                return
+        super().wheelEvent(event)
+
+
 class ProgramDetailPage(QWidget):
     """See module docstring. `nav` is anything exposing push(widget, title)
     AND request_load_in_machine(gcode_path) (see
@@ -177,10 +221,9 @@ class ProgramDetailPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        scroll = QScrollArea(self)
+        scroll = _PageScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        QScroller.grabGesture(scroll.viewport(), QScroller.ScrollerGestureType.TouchGesture)
         outer.addWidget(scroll)
 
         content = QWidget()
@@ -226,6 +269,7 @@ class ProgramDetailPage(QWidget):
         except AttributeError:
             pass
         col.addWidget(self._sim)
+        scroll.add_no_scroll_widget(self._sim)
 
         # ── G-code preview (always expanded — no collapse option) ────────────
         col.addWidget(QLabel("G-Code"))
@@ -233,6 +277,7 @@ class ProgramDetailPage(QWidget):
         self._gcode_view.setMinimumHeight(240)
         self._gcode_highlighter = GCodeHighlighter(self._gcode_view.text_edit.document())
         col.addWidget(self._gcode_view)
+        scroll.add_no_scroll_widget(self._gcode_view)
 
         # ── Used tools (flat list, magazine checkbox) ───────────────────────
         col.addWidget(QLabel("Verwendete Werkzeuge"))
@@ -306,20 +351,23 @@ class ProgramDetailPage(QWidget):
         self._rebuild_tool_rows(op.tools)
         self._rebuild_history(op.lineage_id)
 
-    def _rebuild_tool_rows(self, tool_numbers: list[int]) -> None:
-        wanted = set(tool_numbers)
-        for number in list(self._tool_rows.keys()):
-            if number not in wanted:
-                row = self._tool_rows.pop(number)
+    def _rebuild_tool_rows(self, pockets: list[int]) -> None:
+        """*pockets* are the raw numbers parsed from this operation's
+        T-addresses — pocket numbers, not tool_number identities (see
+        _ToolRow's docstring)."""
+        wanted = set(pockets)
+        for pocket in list(self._tool_rows.keys()):
+            if pocket not in wanted:
+                row = self._tool_rows.pop(pocket)
                 self._tools_col.removeWidget(row)
                 row.deleteLater()
-        for number in tool_numbers:
-            if number not in self._tool_rows:
-                row = _ToolRow(number)
-                self._tool_rows[number] = row
+        for pocket in pockets:
+            if pocket not in self._tool_rows:
+                row = _ToolRow(pocket)
+                self._tool_rows[pocket] = row
                 self._tools_col.addWidget(row)
             else:
-                self._tool_rows[number].refresh()
+                self._tool_rows[pocket].refresh()
 
     def _rebuild_history(self, lineage_id: int) -> None:
         while self._history_layout.count():

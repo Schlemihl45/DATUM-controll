@@ -11,23 +11,30 @@ operation card pushes ProgramDetailPage the same way.
 """
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QPlainTextEdit,
-    QScrollArea, QScroller, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox,
+    QPlainTextEdit, QScrollArea, QScroller, QSizePolicy, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
-from controller.sim.simulation.tool_definition import UNASSIGNED_POCKET
+from controller.persistence.workpiece_sync import GCODE_EXTENSIONS, sync_single_workpiece
+from controller.sim.core.settings import AppSettings
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.program_detail_page import ProgramDetailPage
 from controller.ui.widgets.card import Card
+from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.collapsible_section import CollapsibleSection
 from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
+_GCODE_FILE_FILTER = "G-Code-Dateien (*.ngc *.nc *.cnc);;Alle Dateien (*)"
 
 
 class _AutoSaveTextEdit(QPlainTextEdit):
@@ -134,15 +141,38 @@ class _OperationCard(Card):
             self.delete_requested.emit()
 
 
+class _LoadProgramCard(CardButton):
+    """Pinned first row of the operations list: opens a file picker to
+    copy an existing G-code file INTO this workpiece's folder — the
+    normal way to add a program, or (by picking a file with the same
+    name as one already there) create a new VERSION of it, since
+    versioning is driven purely by "same gcode_path, different file
+    hash" during sync (see persistence/workpiece_sync.py's module
+    docstring and create_new_version())."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(
+            "Programm laden", icon=get_icon("addtool", tint=True), icon_size=32,
+        )
+        self.setProperty("variant", "create_tool")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumHeight(64)
+
+
 class _UsedToolRow(QWidget):
     """One row in the collapsed "used tools" section — a pocket badge
-    (same PocketBadge style ToolPage uses) + name + magazine status,
-    resolved against ToolDatabase (no editing here, see ToolPage for
-    that)."""
+    (same PocketBadge style ToolPage uses) + name + magazine status.
 
-    def __init__(self, tool_number: int, parent: QWidget | None = None) -> None:
+    *pocket* is the raw number parsed from a T-address, which selects a
+    MAGAZINE POCKET, not a persistent ToolDefinition.tool_number identity
+    (see gcode/compiler.py's ToolChange.pocket_number docstring and
+    program_detail_page.py's _ToolRow, which resolves the same way) — so
+    this looks tools up via ToolDatabase.get_tool_by_pocket(), not
+    get_tool()."""
+
+    def __init__(self, pocket: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._tool_number = tool_number
+        self._pocket = pocket
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -152,6 +182,7 @@ class _UsedToolRow(QWidget):
         self._pocket_badge.setObjectName("PocketBadge")
         self._pocket_badge.setFixedSize(30, 22)
         self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pocket_badge.setText(str(pocket))
         row.addWidget(self._pocket_badge)
 
         self._label = QLabel()
@@ -160,16 +191,12 @@ class _UsedToolRow(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
-        tool = ToolDatabase.instance().get_tool(self._tool_number)
+        tool = ToolDatabase.instance().get_tool_by_pocket(self._pocket)
         if tool is None:
-            self._pocket_badge.setText("-")
-            self._label.setText(f"T{self._tool_number} — nicht in der Werkzeugdatenbank")
+            self._label.setText(f"Pocket {self._pocket} — leer")
             return
-        in_magazine = tool.pocket != UNASSIGNED_POCKET
-        self._pocket_badge.setText(str(tool.pocket) if in_magazine else "-")
-        name = tool.name or tool.remark or f"T{self._tool_number}"
-        status = "im Magazin" if in_magazine else "nicht im Magazin"
-        self._label.setText(f"T{self._tool_number} — {name} ({status})")
+        name = tool.name or tool.remark or f"Pocket {self._pocket}"
+        self._label.setText(f"Pocket {self._pocket} — {name} (im Magazin)")
 
 
 class WorkpieceDetailPage(QWidget):
@@ -230,6 +257,9 @@ class WorkpieceDetailPage(QWidget):
         col.addWidget(QLabel("Programme"))
         self._operations_col = QVBoxLayout()
         self._operations_col.setSpacing(6)
+        self._load_program_card = _LoadProgramCard()
+        self._load_program_card.clicked.connect(self._on_load_program)
+        self._operations_col.addWidget(self._load_program_card)
         self._operation_cards: dict[int, _OperationCard] = {}
         col.addLayout(self._operations_col)
 
@@ -290,9 +320,6 @@ class WorkpieceDetailPage(QWidget):
                 self._operations_col.removeWidget(card)
                 card.deleteLater()
 
-        if not operations:
-            return
-
         for position, op in enumerate(operations):
             card = self._operation_cards.get(op.id)
             if card is None:
@@ -304,7 +331,7 @@ class WorkpieceDetailPage(QWidget):
                 self._operation_cards[op.id] = card
             else:
                 card.set_operation(op)
-            target_index = position
+            target_index = position + 1   # index 0 is the pinned _LoadProgramCard
             if self._operations_col.indexOf(card) != target_index:
                 self._operations_col.removeWidget(card)
                 self._operations_col.insertWidget(target_index, card)
@@ -330,6 +357,69 @@ class WorkpieceDetailPage(QWidget):
         operation = self._db.get_operation(operation_id)
         title = operation.name if operation else "Programm"
         self._nav.push(ProgramDetailPage(operation_id, self._nav), title)
+
+    def _on_load_program(self) -> None:
+        """"Programm laden": copy a G-code file INTO this workpiece's
+        folder, then sync just this workpiece so the new/changed file
+        turns into a new Operation (or a new VERSION of an existing one,
+        if its filename already exists there — see _LoadProgramCard's
+        docstring)."""
+        start_dir = AppSettings.instance().workpieces_explorer_root_path or self._workpiece.folder_path
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Programm laden", start_dir, _GCODE_FILE_FILTER,
+        )
+        if not path:
+            return
+
+        source = Path(path)
+        dest_folder = Path(self._workpiece.folder_path)
+        dest_folder.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_folder / source.name
+
+        if source.suffix.lower() not in GCODE_EXTENSIONS:
+            QMessageBox.warning(
+                self, "Ungültige Datei",
+                f"\"{source.name}\" ist keine unterstützte G-Code-Datei "
+                f"({', '.join(GCODE_EXTENSIONS)}).",
+            )
+            return
+
+        same_file = dest_path.resolve() == source.resolve() if dest_path.exists() else False
+        if dest_path.exists() and not same_file:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Datei existiert bereits")
+            box.setText(
+                f"Im Werkstück-Ordner existiert bereits eine Datei namens "
+                f"\"{dest_path.name}\".\n\n"
+                "Überschreiben legt automatisch eine neue Version dieses "
+                "Programms an."
+            )
+            overwrite_btn = box.addButton("Überschreiben", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(overwrite_btn)
+            box.exec()
+            if box.clickedButton() is not overwrite_btn:
+                return
+
+        if not same_file:
+            try:
+                shutil.copyfile(source, dest_path)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Datei konnte nicht kopiert werden",
+                    f"{source} -> {dest_path}:\n{exc}",
+                )
+                return
+
+        result = sync_single_workpiece(self._workpiece_id, self._db)
+        if not result.ok:
+            QMessageBox.warning(
+                self, "Sync-Fehler",
+                "Die Datei wurde kopiert, aber beim Synchronisieren sind "
+                "Fehler aufgetreten:\n\n" + "\n".join(result.errors),
+            )
+        self._reload()
 
     def _show_wizard_stub(self) -> None:
         QMessageBox.information(
