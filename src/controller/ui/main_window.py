@@ -16,7 +16,7 @@ construction so corner-fill colours stay in sync with the active theme.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QTimer
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -294,13 +294,29 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_HOME_INDEX)
 
     def _on_load_in_machine_requested(self, gcode_path: str) -> None:
-        """A ProgramDetailPage's "In Maschine laden" button fired (see
-        WorkpiecesSection.load_in_machine_requested) — load that file into
-        MachinePage and switch to it, closing the loop MachinePage's own
-        "Datei laden" button opened (open_workpieces_requested, connected
-        above)."""
-        self._machine_page.load_file(gcode_path)
+        """A ProgramDetailPage's "Ausführen" button fired (see
+        WorkpiecesSection.load_in_machine_requested) — switch to
+        MachinePage and load that file into it, closing the loop
+        MachinePage's own "Datei laden" button opened
+        (open_workpieces_requested, connected above).
+
+        Switches the page FIRST, and only THEN loads the file, on a
+        QTimer.singleShot(0, ...) — one event-loop turn later — rather
+        than the reverse (load, then switch), which is what this used to
+        do: MachinePage.load_file() runs G-code compilation and (via
+        DatumSimWidget.set_file()) kicks off the voxel-grid rebuild, and
+        the click that triggers this handler must never sit there
+        waiting on either before the UI visibly reacts. Ordering it this
+        way means the page transition itself is instant — the operator
+        sees MachinePage appear immediately — and the load runs a moment
+        later without blocking that transition. This does not by itself
+        make load_file() cheaper (see DatumSimWidget._schedule_voxel_sim()
+        for the actual voxel-build-off-the-GUI-thread fix); it only
+        prevents the OLD page (the one this click was made on) from
+        freezing while load_file() is running.
+        """
         self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
+        QTimer.singleShot(0, lambda: self._machine_page.load_file(gcode_path))
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:
         """Feed Hold only makes sense — and is only shown — while a
