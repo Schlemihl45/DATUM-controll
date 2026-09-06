@@ -118,6 +118,19 @@ def run_prepass(
     carver = VoxelCarver(_CpuMaterialSink(material, bbox, voxel_size))
 
     pts, feeds, line_ids = path.points, path.feed_rates, path.line_ids
+    # Vectorized once, outside the loop — a 1:1 restatement of the per-
+    # iteration `feeds[i + 1] == 0.0` this replaces, no semantic change
+    # (feeds has exactly one more element than there are segments, so
+    # feeds[1:] lines up with segment index i via is_rapid_arr[i]).
+    # NOTE: this alone does not make the loop fast — the actual cost here
+    # (profiled at ~3.8s for a 1022-line program) is inside check_segment()/
+    # carve_segment()'s own geometric sampling (np.clip/np.linspace calls),
+    # which cannot be safely batched across segments without changing
+    # collision-detection semantics (carve_segment() mutates the shared
+    # material array; segment i+1's check legitimately depends on segment
+    # i having already carved — see this module's own docstring). That is
+    # tracked as a separate, larger follow-up task, not attempted here.
+    is_rapid_arr = feeds[1:] == 0.0
 
     current_tool = initial_tool
     current_holder = get_holder(current_tool.holder_preset) if current_tool else None
@@ -141,7 +154,7 @@ def run_prepass(
         if current_tool is None:
             continue
 
-        is_rapid = feeds[i + 1] == 0.0
+        is_rapid = bool(is_rapid_arr[i])
         hit = check_segment(
             material, bbox, voxel_size, pts[i], pts[i + 1],
             current_tool, is_rapid, current_holder,

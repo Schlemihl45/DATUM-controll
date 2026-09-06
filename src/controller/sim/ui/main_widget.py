@@ -99,6 +99,22 @@ class DatumSimWidget(QWidget):
     # hit on subsequent ticks. See _handle_collision_state().
     collision_detected = Signal(object)
 
+    # Emitted once a background-compiled program from set_file() is fully
+    # applied to this widget (path uploaded to GL, tool/time state
+    # refreshed, voxel/prepass scheduled) — see _on_compile_done(). The
+    # async analogue of "set_file() returned" under the old synchronous
+    # design; MachinePage waits for this before treating the file as
+    # actually loaded (see its _file_ready flag) rather than trusting
+    # set_file()'s own (now immediate, fire-and-forget) return.
+    file_ready = Signal(str)      # gcode path
+
+    # Emitted if the background compile in set_file() raised — today's
+    # synchronous compiler.load_file() call let exceptions propagate
+    # straight to whatever called set_file(); backgrounding it means the
+    # worker thread must catch instead, so this exists to give that
+    # failure somewhere to go.
+    load_failed = Signal(object)  # Exception
+
     # Internal plumbing for the collision pre-pass's background->main
     # thread handoff (generation, CollisionPrepassResult|None) — see
     # _start_prepass()'s docstring for why this (a Qt signal) is used
@@ -110,6 +126,12 @@ class DatumSimWidget(QWidget):
     # _schedule_voxel_sim()'s docstring. Same pattern/reasoning as
     # _prepass_done above.
     _voxel_material_ready = Signal(int, object, object)
+
+    # Internal plumbing for the G-code compile's background->main thread
+    # handoff (generation, GCodeProgram|None, Workpiece|None,
+    # Exception|None) — see set_file()'s docstring. Same pattern as
+    # _prepass_done/_voxel_material_ready above.
+    _compile_done = Signal(int, object, object, object)
 
     _TOOL_MAP = {
         "Endmill":    ToolMode.CYLINDER,
@@ -178,6 +200,16 @@ class DatumSimWidget(QWidget):
         self._pending_voxel_stock:    "StockDefinition | None" = None
         self._pending_voxel_material: "np.ndarray | None"      = None
 
+        # G-code compile (GCodeCompiler.load_file() — tokenize/parse/plan/
+        # tessellate the whole file, profiled at ~195ms for a modest
+        # 1000-line program) runs in a background thread — see set_file().
+        # Same generation/abort-Event guard pattern as the two pairs above;
+        # _pending_load_path records which path THIS generation is for,
+        # used only for a same-path sanity check in _on_compile_done().
+        self._compile_generation: int             = 0
+        self._compile_abort:      threading.Event = threading.Event()
+        self._pending_load_path:  str | None      = None
+
         # Carving runs in a background thread so the main-thread controller UI
         # is never blocked by long numpy operations (deep plunges etc.).
         self._carve_thread: threading.Thread | None = None
@@ -200,6 +232,7 @@ class DatumSimWidget(QWidget):
         self._pending_prepass_cb: Callable[["CollisionPrepassResult | None"], None] | None = None
         self._prepass_done.connect(self._on_prepass_done)
         self._voxel_material_ready.connect(self._on_voxel_material_ready)
+        self._compile_done.connect(self._on_compile_done)
 
         # ── Signal connections ────────────────────────────────────────────────
         # Tool/path display mode are read straight from AppSettings rather
@@ -256,15 +289,40 @@ class DatumSimWidget(QWidget):
     # ── File loading ──────────────────────────────────────────────────────────
 
     def set_file(self, path: str) -> None:
-        """Compile and load a G-code file, set up the simulation player."""
+        """Kick off compiling *path* in the background and return
+        immediately — does NOT block until the file is actually loaded.
+
+        GCodeCompiler.load_file() (tokenize/parse/plan/tessellate the
+        whole file) profiled at ~195ms for a modest 1000-line program —
+        real work, but pure Python/numpy with no GL dependency, so unlike
+        the GPU-bound steps further down it has no reason to run on the
+        GUI thread. Runs in a background thread (same generation-counter/
+        threading.Event abort-guard pattern as _start_prepass()/
+        _schedule_voxel_sim() above); the result — or an exception, since
+        a background call can no longer let one simply propagate to the
+        caller the way this method used to — is delivered back via
+        _compile_done, picked up by _on_compile_done() below, which does
+        everything that DOES need the GUI thread (the GL path upload,
+        tool/time state, and scheduling the voxel/prepass work that reads
+        _last_program) and finally emits file_ready/load_failed so
+        MachinePage knows the file is actually usable now, not just
+        requested — see that page's _file_ready flag.
+        """
         self._teardown_voxel_sim()
         # A new program invalidates any in-flight/completed pre-pass for
         # the OLD one outright — bump the generation and drop the stale
         # result now so nothing between here and the fresh _start_prepass()
-        # call below could read it as still valid.
+        # call (from _on_compile_done()) could read it as still valid.
         self._prepass_generation += 1
         self._prepass_abort.set()
         self._prepass_result = None
+
+        self._compile_generation += 1
+        self._compile_abort.set()
+        gen = self._compile_generation
+        my_abort = threading.Event()
+        self._compile_abort = my_abort
+        self._pending_load_path = path
 
         s = AppSettings.instance()
         # The program's first move is implicitly a rapid FROM this position
@@ -272,23 +330,51 @@ class DatumSimWidget(QWidget):
         # Z clearance, not the work origin itself, so that rapid doesn't
         # read as a false-positive plunge into the stock right at tick 1.
         start_position = np.array([0.0, 0.0, s.start_safe_z_mm], dtype='f4')
-        program = self.compiler.load_file(path, start_position=start_position)
+
+        def _worker() -> None:
+            try:
+                program = self.compiler.load_file(path, start_position=start_position)
+                # Resolve/create this file's Workpiece record — see
+                # persistence.workpiece_db.WorkpieceDatabase and
+                # domain.models.Workpiece's collision_detection_enabled
+                # docstring. On a first-ever-seen path this does a real
+                # sha256 file hash + sqlite write — safe off the GUI
+                # thread since WorkpieceDatabase's connection is opened
+                # with check_same_thread=False (persistence/workpiece_db.py).
+                workpiece = WorkpieceDatabase.instance().get_or_create_by_path(path)
+                error = None
+            except Exception as exc:  # noqa: BLE001 — reported via load_failed, not swallowed
+                program, workpiece, error = None, None, exc
+            if not my_abort.is_set():
+                self._compile_done.emit(gen, program, workpiece, error)
+
+        threading.Thread(target=_worker, daemon=True, name="gcode-compile").start()
+
+    def _on_compile_done(self, gen: int, program, workpiece, error) -> None:
+        """Slot for _compile_done — GUI thread. Drops a stale generation's
+        result exactly like _on_prepass_done()/_on_voxel_material_ready()
+        (a newer set_file() call, or a teardown, superseded it)."""
+        if gen != self._compile_generation:
+            return
+        if error is not None:
+            self.load_failed.emit(error)
+            return
+
         self._clean_lines          = program.clean_lines
         self._raw_lines            = program.raw_lines   # for collision log line text
         self._player               = SimulationPlayer(program.path)
         self._tool_changes         = program.tool_changes
         self._last_tool_change_idx = -1
         self._last_program         = program   # kept for voxel re-init
+        self._current_workpiece    = workpiece
 
-        # Resolve/create this file's Workpiece record — see
-        # persistence.workpiece_db.WorkpieceDatabase and
-        # domain.models.Workpiece's collision_detection_enabled docstring.
-        # Purely a per-workpiece override lookup today (_effective_
-        # collision_enabled()) — no UI anywhere reads/writes it yet.
-        self._current_workpiece = WorkpieceDatabase.instance().get_or_create_by_path(path)
-
+        # ---- Everything below is GL-bound or reads _last_program/
+        # _current_workpiece — stays on the GUI thread, same calls as
+        # before this method existed, just running from here instead of
+        # inline in set_file(). ----
         self.viewport.set_path(program.path)
 
+        s = AppSettings.instance()
         self.set_tool_mode(self._TOOL_MAP.get(s.tool_mode, ToolMode.CYLINDER))
         self.set_path_mode(self._PATH_MAP.get(s.path_mode, PathMode.PROGRESSIVE))
 
@@ -304,6 +390,8 @@ class DatumSimWidget(QWidget):
         # result is applied to _voxel_ctrl (now or once it's created) via
         # _on_prepass_done()/_create_voxel_sim().
         self._start_prepass()
+
+        self.file_ready.emit(self._pending_load_path)
 
     # ── Collision pre-pass lifecycle ──────────────────────────────────────────
 

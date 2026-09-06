@@ -361,6 +361,16 @@ class MachineController(QObject):
         return bool(self._last_inpos)
 
     @property
+    def feed_hold(self) -> bool:
+        """Whether feed-hold is currently engaged. Orthogonal to
+        program_state — the machine stays RUNNING throughout a feed-hold
+        (see set_feed_hold()'s docstring); UI code that needs to react to
+        feed-hold changing must listen to feed_hold_changed separately
+        from program_state_changed (see ui/pages/machine_page.py's
+        _sync_ui_state())."""
+        return bool(self._last_feed_hold)
+
+    @property
     def loaded_file(self) -> str:
         return self._last_file or ""
 
@@ -503,15 +513,20 @@ class MachineController(QObject):
         stopping it — SimulatedBackend encodes direction via rpm's sign
         (spindle_on() stores -rpm for a reverse spindle), so no separate
         get_spindle_direction() call is needed; forward is simply
-        `rpm >= 0`. Order matters: spindle off first, then the
-        axes/interpreter halt, so the tool stops turning before motion
-        stops rather than after.
+        `rpm >= 0`. Order matters: spindle off, THEN clear feed-hold (if
+        any was active), THEN the axes/interpreter halt — a full stop
+        subsumes a mere motion-freeze, so feed-hold must not survive it;
+        clearing it has to happen BEFORE pause_program() flips the state
+        away from RUNNING, since SimulatedBackend.set_feed_hold() only
+        applies its own change while still RUNNING (see its docstring) —
+        clearing it after would silently no-op.
         """
         if self._last_program_state != ProgramState.RUNNING:
             return
         feed = self._backend.get_feed_data()
         self._held_spindle = (abs(feed.spindle_rpm), feed.spindle_rpm >= 0)
         self._backend.spindle_off()
+        self._backend.set_feed_hold(False)
         self._backend.pause_program()
 
     def resume_program(self) -> None:
