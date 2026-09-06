@@ -119,6 +119,11 @@ class MachineController(QObject):
 
         self._last_tool:            int | None          = None
 
+        # Set by hold_axes_and_spindle(), consumed and cleared by the next
+        # resume_program() — see both methods' docstrings. None while the
+        # current PAUSED state (if any) came from a plain pause_program().
+        self._held_spindle: tuple[float, bool] | None = None   # (rpm, forward)
+
         # QTimer — fires repeatedly every 50 ms (single_shot=False by default)
         self._timer = QTimer(self)
         self._timer.setInterval(self.POLL_INTERVAL_MS)
@@ -409,6 +414,33 @@ class MachineController(QObject):
         """MDI: ON + idle + homed."""
         return self._is_on() and self._is_idle() and bool(self._last_homed)
 
+    # ------------------------------------------------------------------
+    # Preconditions (public — same conditions as above, exposed so UI
+    # pages like ManualPage (ui/pages/manual_page.py) can enable/disable
+    # their own buttons without re-implementing "ON + idle [+ homed]"
+    # three/four times over. Homing itself only needs ON — you home to
+    # establish a reference, so it can't also require being homed.
+    # ------------------------------------------------------------------
+
+    @property
+    def can_jog(self) -> bool:
+        """Jog controls should be enabled: same condition run_program()'s
+        precondition check uses minus the homed requirement — see _can_jog()."""
+        return self._can_jog()
+
+    @property
+    def can_home(self) -> bool:
+        """Homing controls should be enabled: machine ON. Not idle-gated —
+        the sim never RUNs while ON without a program loaded, and homing
+        while genuinely running would be caught by home_all()/home_joint()
+        themselves (which only check _is_on())."""
+        return self._is_on()
+
+    @property
+    def can_mdi(self) -> bool:
+        """MDI input should be enabled: same condition send_mdi() checks."""
+        return self._can_mdi()
+
     def _warn(self, message: str) -> None:
         """Emit a WARNING through error_occurred without stopping operation."""
         self.error_occurred.emit(
@@ -459,10 +491,47 @@ class MachineController(QObject):
         if self._last_program_state == ProgramState.RUNNING:
             self._backend.pause_program()
 
+    def hold_axes_and_spindle(self) -> None:
+        """Stop axes AND spindle while keeping the program position, so
+        resume_program() can pick back up exactly where it left off — NOT
+        the same as stop_program(), whose own docstring says it "abort[s]"
+        and loses position. Distinct from plain pause_program() only in
+        that it also stops the spindle (which pause_program() leaves
+        running) and remembers its state to restart it correctly.
+
+        Saves the spindle's rpm/direction from get_feed_data() BEFORE
+        stopping it — SimulatedBackend encodes direction via rpm's sign
+        (spindle_on() stores -rpm for a reverse spindle), so no separate
+        get_spindle_direction() call is needed; forward is simply
+        `rpm >= 0`. Order matters: spindle off first, then the
+        axes/interpreter halt, so the tool stops turning before motion
+        stops rather than after.
+        """
+        if self._last_program_state != ProgramState.RUNNING:
+            return
+        feed = self._backend.get_feed_data()
+        self._held_spindle = (abs(feed.spindle_rpm), feed.spindle_rpm >= 0)
+        self._backend.spindle_off()
+        self._backend.pause_program()
+
     def resume_program(self) -> None:
-        """Resume a paused program."""
-        if self._last_program_state == ProgramState.PAUSED:
-            self._backend.resume_program()
+        """Resume a paused program.
+
+        If the pause came from hold_axes_and_spindle() (spindle stopped
+        along with the axes), the spindle is restarted first, at its
+        saved rpm/direction, THEN the backend's actual resume runs — an
+        operator hitting Start must not get axes moving again with the
+        spindle still off, let alone spinning the wrong way. A plain
+        pause_program() (spindle never touched) leaves _held_spindle
+        None, so this behaves exactly as before in that case — the same
+        reason machine_page.py's _on_start_clicked() needs no changes."""
+        if self._last_program_state != ProgramState.PAUSED:
+            return
+        if self._held_spindle is not None:
+            rpm, forward = self._held_spindle
+            self._backend.spindle_on(rpm, forward)
+            self._held_spindle = None
+        self._backend.resume_program()
 
     def stop_program(self) -> None:
         """Abort a running or paused program."""

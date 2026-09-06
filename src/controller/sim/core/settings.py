@@ -68,6 +68,7 @@ class AppSettings(QObject):
 
     start_safe_z_mm_changed = Signal(float)
     tool_pocket_count_changed = Signal(int)
+    has_rotary_axes_changed = Signal(bool)
 
     # ── Voxel colour presets ───────────────────────────────────────────────────
     VOXEL_COLORS: dict[str, tuple[float, float, float]] = {
@@ -579,3 +580,18 @@ class AppSettings(QObject):
         v = max(1, int(v))
         self._qs.setValue("tools/pocket_count", v)
         self.tool_pocket_count_changed.emit(v)
+
+    # ── Machine axis configuration ──────────────────────────────────────────
+
+    @property
+    def has_rotary_axes(self) -> bool:
+        """Whether this machine has configured rotary axes (A/B/C) in
+        addition to X/Y/Z. Default False — no UI to change this yet, but
+        ManualPage's jog grid (ui/pages/manual_page.py) checks it to decide
+        whether to show A/B/C jog controls at all."""
+        return self._qs.value("machine/has_rotary_axes", False, type=bool)
+
+    @has_rotary_axes.setter
+    def has_rotary_axes(self, v: bool) -> None:
+        self._qs.setValue("machine/has_rotary_axes", bool(v))
+        self.has_rotary_axes_changed.emit(bool(v))

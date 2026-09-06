@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from controller.domain.models import Workpiece
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
 from controller.persistence.workpiece_sync import (
+    absolute_folder_for,
     create_group_folder,
     create_workpiece_folder,
     list_folder_contents,
@@ -45,6 +46,7 @@ from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.page_stack import PageStack
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
+from controller.ui.widgets.tap_gesture import TapGestureMixin
 from controller.ui.widgets.workpiece_filter_bar import WorkpieceFilterBar
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
@@ -59,9 +61,11 @@ def _no_root_warning(parent: QWidget) -> None:
     )
 
 
-class _NewWorkpieceCard(CardButton):
+class _NewWorkpieceCard(TapGestureMixin, CardButton):
     """Pinned action card: creates a new subfolder AND registers it as a
-    Workpiece immediately (see create_workpiece_folder())."""
+    Workpiece immediately (see create_workpiece_folder()). TapGestureMixin
+    listed first so its press/release tap detection shadows CardButton's
+    own click-on-press behaviour (see that mixin's module docstring)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(
@@ -72,9 +76,10 @@ class _NewWorkpieceCard(CardButton):
         self.setMinimumHeight(64)
 
 
-class _NewFolderCard(CardButton):
+class _NewFolderCard(TapGestureMixin, CardButton):
     """Pinned action card: creates an empty subfolder — a pure GROUP, no
-    DB entry (see create_group_folder())."""
+    DB entry (see create_group_folder()). See _NewWorkpieceCard on why
+    TapGestureMixin comes first."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(
@@ -85,12 +90,10 @@ class _NewFolderCard(CardButton):
         self.setMinimumHeight(64)
 
 
-class _GroupCard(Card):
+class _GroupCard(TapGestureMixin, Card):
     """One GROUP subfolder: folder icon + name, no dates (groups carry no
     DB metadata — see domain/models.py's module-level note). Settings
-    menu offers Delete, blocked (see workpiece_sync's module docstring's
-    "Kein kaskadierendes Massenlöschen") unless
-    WorkpieceDatabase.workpieces_under() is empty for this path."""
+    menu offers Delete, cascading — see WorkpieceBrowserPage._on_group_delete_requested()."""
 
     clicked = Signal()
     delete_requested = Signal()
@@ -125,11 +128,6 @@ class _GroupCard(Card):
 
         self.content_layout.addLayout(row)
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
     def _show_menu(self) -> None:
         menu = QMenu(self)
         delete_action = menu.addAction(get_icon("delete", tint=True), "Delete")
@@ -137,7 +135,7 @@ class _GroupCard(Card):
         menu.exec(self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft()))
 
 
-class _WorkpieceCard(Card):
+class _WorkpieceCard(TapGestureMixin, Card):
     """One workpiece row: icon, two-line info (name / created+modified),
     settings menu (Delete). Kept narrow enough for the app's ~600px window
     width (see main_window.py's resize(600, 900)) — ElidedLabel on the
@@ -192,11 +190,6 @@ class _WorkpieceCard(Card):
         self._thumb.set_preview_source("", None)
         self._thumb.set_material_hint(workpiece.material)
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
     def _show_menu(self) -> None:
         menu = QMenu(self)
         delete_action = menu.addAction(get_icon("delete", tint=True), "Delete")
@@ -209,7 +202,8 @@ class _WorkpieceCard(Card):
         box.setWindowTitle("Werkstück löschen")
         box.setText(
             "Werkstück wirklich löschen?\n"
-            "Alle zugehörigen Programme werden mitgelöscht.\n"
+            "Der zugehörige Ordner samt aller G-Code-Dateien wird dabei "
+            "UNWIDERRUFLICH von der Festplatte gelöscht.\n"
             "Diese Aktion kann nicht rückgängig gemacht werden."
         )
         delete_btn = box.addButton("Löschen", QMessageBox.ButtonRole.DestructiveRole)
@@ -247,13 +241,21 @@ class _BrowserListView(QScrollArea):
         self._col.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.setWidget(container)
 
+        # Side by side, half-width each — the vertical list of group/
+        # workpiece cards only starts below this one row.
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(6)
         self._new_workpiece_card = _NewWorkpieceCard()
         self._new_workpiece_card.clicked.connect(self.create_workpiece_requested)
-        self._col.addWidget(self._new_workpiece_card)
+        actions_row.addWidget(self._new_workpiece_card, stretch=1)
 
         self._new_folder_card = _NewFolderCard()
         self._new_folder_card.clicked.connect(self.create_folder_requested)
-        self._col.addWidget(self._new_folder_card)
+        actions_row.addWidget(self._new_folder_card, stretch=1)
+
+        actions_widget = QWidget()
+        actions_widget.setLayout(actions_row)
+        self._col.addWidget(actions_widget)
 
         self._group_cards: dict[str, _GroupCard] = {}
         self._workpiece_cards: dict[int, _WorkpieceCard] = {}
@@ -289,7 +291,7 @@ class _BrowserListView(QScrollArea):
         # Groups first (navigation before content), then workpieces —
         # each bucket already arrives alphabetically sorted (see
         # WorkpieceBrowserPage._refresh_list()).
-        position = 2   # index 0/1 are the two pinned action cards
+        position = 1   # index 0 is the pinned action-cards row
         for rel in groups:
             card = self._group_cards.get(rel)
             if card is None:
@@ -449,34 +451,60 @@ class WorkpieceBrowserPage(QWidget):
         self._nav.push(WorkpieceBrowserPage(relative_path, self._nav), title)
 
     def _on_group_delete_requested(self, relative_path: str) -> None:
+        """Cascading folder delete — replaces the earlier "blocked unless
+        empty" rule: deleting a GROUP now recursively removes every
+        Workpiece underneath it (workpieces_under(), any depth) AND the
+        physical folder tree itself (their G-code files included).
+
+        Order matters for consistency: the folder is removed from disk
+        FIRST, and DB rows only deleted once that succeeded. Deleting the
+        DB rows first and having the filesystem removal fail afterward
+        (permission error, a file open elsewhere) would leave orphaned
+        G-code files with no DB reference — which the next sync would
+        misread as brand-new workpieces.
+        """
         under = self._db.workpieces_under(relative_path)
-        if under:
-            QMessageBox.warning(
-                self, "Ordner enthält Werkstücke",
-                f"Dieser Ordner enthält {len(under)} Werkstück(e). Diese "
-                "müssen zuerst einzeln gelöscht werden, bevor der Ordner "
-                "gelöscht werden kann.",
-            )
-            return
+        folder_name = relative_path.rsplit("/", 1)[-1]
+
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Ordner löschen")
-        box.setText(
-            f"Ordner \"{relative_path.rsplit('/', 1)[-1]}\" wirklich löschen?\n"
-            "Diese Aktion kann nicht rückgängig gemacht werden."
-        )
-        delete_btn = box.addButton("Löschen", QMessageBox.ButtonRole.DestructiveRole)
-        box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(delete_btn)
+        if under:
+            box.setText(
+                f"Ordner \"{folder_name}\" wirklich löschen?\n\n"
+                f"Dieser Ordner enthält {len(under)} Werkstück(e). Alle "
+                "zugehörigen G-Code-Dateien werden dabei UNWIDERRUFLICH "
+                "von der Festplatte gelöscht — nicht nur die "
+                "Datenbank-Einträge.\n\n"
+                "Diese Aktion kann nicht rückgängig gemacht werden."
+            )
+        else:
+            box.setText(
+                f"Ordner \"{folder_name}\" wirklich löschen?\n"
+                "Diese Aktion kann nicht rückgängig gemacht werden."
+            )
+        delete_btn = box.addButton("Ordner löschen", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+        # Deliberate departure from tool_card_widget.py's single-tool
+        # _confirm_delete() convention (which defaults to the destructive
+        # button): a cascading delete of potentially many workpieces AND
+        # their files is a much heavier action — Abbrechen gets the
+        # default focus/Enter-key binding here, "Ordner löschen" is never
+        # triggered by a stray Enter press.
+        box.setDefaultButton(cancel_btn)
         box.exec()
         if box.clickedButton() is not delete_btn:
             return
+
         root = AppSettings.instance().workpieces_root_path
         try:
             shutil.rmtree(Path(root) / relative_path)
         except OSError as exc:
             QMessageBox.warning(self, "Löschen fehlgeschlagen", str(exc))
             return
+
+        for workpiece in under:
+            self._db.delete_workpiece(workpiece.id)
         self._reload()
 
     def _on_workpiece_clicked(self, workpiece_id: int) -> None:
@@ -485,6 +513,21 @@ class WorkpieceBrowserPage(QWidget):
         self._nav.push(WorkpieceDetailPage(workpiece_id, self._nav), title)
 
     def _on_workpiece_delete_requested(self, workpiece_id: int) -> None:
+        """DB row + this one workpiece's own folder contents — not the
+        Job cross-check (see Abschnitt A: dropped entirely, never built).
+        Same disk-first-then-DB ordering as the cascading group delete
+        (_on_group_delete_requested()), for the same orphan-avoidance
+        reason."""
+        workpiece = self._db.get_workpiece(workpiece_id)
+        if workpiece is None:
+            return
+        folder = absolute_folder_for(workpiece)
+        if folder is not None and folder.is_dir():
+            try:
+                shutil.rmtree(folder)
+            except OSError as exc:
+                QMessageBox.warning(self, "Löschen fehlgeschlagen", str(exc))
+                return
         self._db.delete_workpiece(workpiece_id)
 
 
