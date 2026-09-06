@@ -401,12 +401,14 @@ class WorkpieceDatabase:
     def delete_workpiece(self, workpiece_id: int) -> None:
         """Delete a workpiece and (via ON DELETE CASCADE) all its operations.
 
-        TODO: once a Job persistence/repository exists, this MUST first
-        check whether any Job references workpiece_id and refuse (or ask
-        for confirmation) if so — a workpiece that's part of production
-        history should not simply disappear. No such repository exists
-        yet (see domain.models.Job — in-memory only so far), so deletion
-        is unconditional for now; this is a known gap, not an oversight.
+        No Job cross-check here, deliberately — domain.models.Job stays a
+        plain in-memory dataclass with no persistence, queue, or UI (see
+        claude_code_prompt_workpieces_page.md's Abschnitt A); running a
+        program is now a direct action (ProgramDetailPage's "Ausführen"
+        button loads the operation's gcode_path straight into MachinePage,
+        see WorkpiecesSection.request_load_in_machine()), not something
+        routed through a Job. There is nothing left for this method to
+        check against.
         """
         self._conn.execute("DELETE FROM workpieces WHERE id = ?", (workpiece_id,))
         self._conn.commit()
@@ -560,9 +562,20 @@ class WorkpieceDatabase:
         self, old_operation: Operation, new_gcode_path: str, new_hash: str,
     ) -> Operation:
         """Produce a new version of *old_operation*'s family: the old row
-        is flipped to is_current=0, and a new row is inserted pointing
-        back at it (previous_version_id), sharing its lineage_id, with
-        version = old.version + 1.
+        is flipped to is_current=0 AND renamed to "{old.name} (Version
+        {old.version})", and a new row is inserted pointing back at it
+        (previous_version_id), sharing its lineage_id, with
+        version = old.version + 1 and the unchanged, file-derived name.
+
+        The rename happens to the operation being SUPERSEDED, not the new
+        one — the new operation keeps the plain name derived from its
+        filename, while the one dropping out of "current" gets a name
+        that's only ever seen inside the history list. This is naturally
+        idempotent across repeated versioning: each row is renamed
+        exactly once, at the moment IT is superseded, using ITS OWN
+        version number (old_operation.version) — no separate bookkeeping,
+        and no risk of a version being renamed twice or getting a
+        double suffix.
 
         tools_manual carries forward (it's user intent, not derived from
         file content); tools_auto starts empty and is repopulated by the
@@ -571,8 +584,12 @@ class WorkpieceDatabase:
         best-effort defaults until edited for the new version.
         """
         self._conn.execute(
-            "UPDATE operations SET is_current = 0, modified_at = ? WHERE id = ?",
-            (datetime.now().isoformat(), old_operation.id),
+            "UPDATE operations SET is_current = 0, name = ?, modified_at = ? WHERE id = ?",
+            (
+                f"{old_operation.name} (Version {old_operation.version})",
+                datetime.now().isoformat(),
+                old_operation.id,
+            ),
         )
         self._conn.commit()
         WorkpieceDatabaseSignals.instance().operation_changed.emit(old_operation.id)

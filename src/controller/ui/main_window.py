@@ -30,6 +30,7 @@ from controller.core.machine.controller import MachineController
 from controller.domain.models import ProgramState
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.machine_page import MachinePage
+from controller.ui.pages.manual_page import ManualPage
 from controller.ui.pages.settings_page import SettingsPage
 from controller.ui.pages.tool_page import ToolPage
 from controller.ui.pages.workpiece_browser_page import WorkpiecesSection
@@ -52,6 +53,7 @@ _MACHINE_PAGE_INDEX = 1
 _SETTINGS_INDEX     = 2
 _TOOLS_PAGE_INDEX   = 3
 _WORKPIECES_INDEX   = 4
+_MANUAL_PAGE_INDEX  = 5
 
 _NAV_ICON_SIZE = QSize(256, 256)
 
@@ -105,18 +107,23 @@ class MainWindow(QMainWindow):
         machine_page_btn = _nav_button("machine")
         tools_page_btn = _nav_button("tools")
 
-        # Pages that don't exist yet — disabled, not faked. See roadmap.
-        setup_page_btn = _nav_button("setup")
+        # "setup" icon (crosshair/target pictogram) reused here rather than
+        # a new asset — visually distinct enough from settings.svg's gear
+        # that "Manuell" and "Einstellungen" stay tellable apart at a
+        # glance in the same grid.
+        manual_page_btn = _nav_button("setup")
+        manual_page_btn.setToolTip("Manuelle Bedienung")
         programs_page_btn = _nav_button("workpieces")
+        # Pages that don't exist yet — disabled, not faked. See roadmap.
         statistics_page_btn = _nav_button("statistics")
         settings_page_btn = _nav_button("settings")
-        for btn in (setup_page_btn, statistics_page_btn):
+        for btn in (statistics_page_btn,):
             btn.setEnabled(False)
             btn.setToolTip("Noch nicht implementiert")
 
         home_grid.addWidget(machine_page_btn, 0, 0)
         home_grid.addWidget(tools_page_btn, 0, 1)
-        home_grid.addWidget(setup_page_btn, 1, 0)
+        home_grid.addWidget(manual_page_btn, 1, 0)
         home_grid.addWidget(programs_page_btn, 1, 1)
         home_grid.addWidget(statistics_page_btn, 2, 0)
         home_grid.addWidget(settings_page_btn, 2, 1)
@@ -125,6 +132,7 @@ class MainWindow(QMainWindow):
         tools_page_btn.clicked.connect(self._on_tools_btn_clicked)
         settings_page_btn.clicked.connect(self._on_settings_btn_clicked)
         programs_page_btn.clicked.connect(self._on_workpieces_btn_clicked)
+        manual_page_btn.clicked.connect(self._on_manual_btn_clicked)
 
         # Build pages
         self._machine_page = MachinePage(controller, self)
@@ -142,6 +150,9 @@ class MainWindow(QMainWindow):
 
         self._workpieces_section = WorkpiecesSection(self)
         self._stack.addWidget(self._workpieces_section)         # _WORKPIECES_INDEX
+
+        self._manual_page = ManualPage(controller, self)
+        self._stack.addWidget(self._manual_page)                # _MANUAL_PAGE_INDEX
 
         # MachinePage's "Datei laden" button no longer loads a fixed file —
         # it sends the user to the Workpieces page to pick a real program;
@@ -204,6 +215,30 @@ class MainWindow(QMainWindow):
         )
         button_row.addWidget(self.feed_hold_btn)
 
+        # New "Halt" button (Abschnitt G) — stops axes AND spindle while
+        # keeping program position (MachineController.hold_axes_and_spindle(),
+        # resumable via MachinePage's own Start button, same as Feed Hold's
+        # own resume path). Deliberately NOT named/wired like
+        # MachinePage's existing self._stop_btn, which despite its
+        # internal name is labeled "Pause" in the UI and calls
+        # pause_program() (leaves the spindle running) — confusable-looking
+        # controls with different real-world effect are a mix-up risk in
+        # an actual emergency, so this one uses a distinct spindle+stop
+        # icon and a label ("Halt") that doesn't read as a synonym for
+        # that page's "Pause" button.
+        self._hold_axes_spindle_btn = CardButton(
+            "Halt", icon=get_icon("spindle", tint=True, size=QSize(40, 40)),
+            icon_size=40,
+        )
+        self._hold_axes_spindle_btn.setProperty("variant", "feed_hold")
+        self._hold_axes_spindle_btn.setFixedSize(100, 100)
+        self._hold_axes_spindle_btn.setVisible(False)
+        self._hold_axes_spindle_btn.setToolTip(
+            "Achsen und Spindel anhalten (Programmposition bleibt erhalten)"
+        )
+        self._hold_axes_spindle_btn.clicked.connect(self._controller.hold_axes_and_spindle)
+        button_row.addWidget(self._hold_axes_spindle_btn)
+
         self.return_btn = CardButton(icon=get_icon("return"), icon_size=48)
         self.return_btn.setFixedSize(100, 100)
         self.return_btn.clicked.connect(self._on_return_clicked)
@@ -243,6 +278,9 @@ class MainWindow(QMainWindow):
     def _on_tools_btn_clicked(self) -> None:
         self._stack.setCurrentIndex(_TOOLS_PAGE_INDEX)
 
+    def _on_manual_btn_clicked(self) -> None:
+        self._stack.setCurrentIndex(_MANUAL_PAGE_INDEX)
+
     def _on_workpieces_btn_clicked(self) -> None:
         # Always enter fresh at the workpiece list — see
         # WorkpiecesSection.reset(), called on the way back out below, so
@@ -276,9 +314,14 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:
-        """Feed Hold only makes sense — and is only shown — while a
-        program is actually RUNNING; it stays out of the way otherwise."""
-        self.feed_hold_btn.setVisible(state == ProgramState.RUNNING)
+        """Feed Hold — and the new Halt button (hold_axes_and_spindle(),
+        Abschnitt G) — only make sense, and are only shown, while a
+        program is actually RUNNING; both stay out of the way otherwise.
+        One trigger point for both, deliberately, rather than a second
+        program_state_changed connection duplicating this one."""
+        running = state == ProgramState.RUNNING
+        self.feed_hold_btn.setVisible(running)
+        self._hold_axes_spindle_btn.setVisible(running)
 
     # ------------------------------------------------------------------
     # Quick buttons -> AbstractBackend (via MachineController)

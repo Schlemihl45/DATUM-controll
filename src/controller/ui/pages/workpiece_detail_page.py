@@ -36,6 +36,7 @@ from controller.ui.widgets.card import Card
 from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
+from controller.ui.widgets.tap_gesture import TapGestureMixin
 from controller.ui.widgets.tool_usage_card import ToolUsageCard
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
@@ -98,14 +99,19 @@ class _SimpleAccordion(QWidget):
         self.body.setVisible(expanded)
 
 
-class _OperationCard(Card):
+class _OperationCard(TapGestureMixin, Card):
     """One current operation ("Programm"): icon, name, dates, a Wizard
     stub button, and a settings menu (Delete). Rendered with a visible
     warning style whenever its G-code file is missing on disk
-    (Operation.file_missing) — never silently like a normal card."""
+    (Operation.file_missing) — never silently like a normal card.
+
+    Tap-vs-scroll click detection comes from TapGestureMixin (listed
+    first so its mousePressEvent/mouseReleaseEvent shadow Card's own via
+    MRO) — see ui/widgets/tap_gesture.py's module docstring."""
 
     clicked = Signal()
     wizard_requested = Signal()
+    execute_requested = Signal()
     delete_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -141,6 +147,18 @@ class _OperationCard(Card):
         self._wizard_btn.clicked.connect(self.wizard_requested)
         row.addWidget(self._wizard_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
+        # Optional quick action alongside ProgramDetailPage's own "Ausführen"
+        # button (see Abschnitt A) — same effect, one tap closer from the
+        # workpiece's operation list instead of opening the program first.
+        self._execute_btn = QToolButton()
+        self._execute_btn.setIcon(get_icon("machine", tint=True))
+        self._execute_btn.setIconSize(QSize(18, 18))
+        self._execute_btn.setFixedSize(32, 32)
+        self._execute_btn.setToolTip("Ausführen")
+        self._execute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._execute_btn.clicked.connect(self.execute_requested)
+        row.addWidget(self._execute_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         self._menu_btn = QToolButton()
         self._menu_btn.setIcon(get_icon("settings", tint=True))
         self._menu_btn.setIconSize(QSize(18, 18))
@@ -159,14 +177,13 @@ class _OperationCard(Card):
             f"Geändert: {operation.modified_at.strftime(_DATE_FMT)}"
         )
         self._thumb.set_preview_source(operation.preview_source or "", operation.gcode_path)
+        self._execute_btn.setEnabled(not operation.file_missing)
+        self._execute_btn.setToolTip(
+            "G-Code-Datei fehlt auf der Festplatte." if operation.file_missing else "Ausführen"
+        )
         self.setProperty("file_missing", operation.file_missing)
         self.style().unpolish(self)
         self.style().polish(self)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
 
     def _show_menu(self) -> None:
         menu = QMenu(self)
@@ -346,6 +363,7 @@ class WorkpieceDetailPage(QWidget):
                 card.set_operation(op)
                 card.clicked.connect(lambda oid=op.id: self._on_operation_clicked(oid))
                 card.wizard_requested.connect(self._show_wizard_stub)
+                card.execute_requested.connect(lambda oid=op.id: self._on_execute_operation(oid))
                 card.delete_requested.connect(lambda oid=op.id: self._on_delete_operation(oid))
                 self._operation_cards[op.id] = card
             else:
@@ -458,6 +476,19 @@ class WorkpieceDetailPage(QWidget):
             self, "Setup-Assistent",
             "Der Setup-Assistent ist noch nicht implementiert.",
         )
+
+    def _on_execute_operation(self, operation_id: int) -> None:
+        """Optional quick "Ausführen" action right on the operation card
+        (Abschnitt A) — same mechanism as ProgramDetailPage's own button:
+        `self._nav` (threaded through the whole page hierarchy) forwards
+        this up to main_window.py, which loads the file into MachinePage
+        and switches to it. Re-fetches the operation fresh from the DB
+        instead of trusting the lambda-captured id's staleness, same
+        pattern as _on_operation_clicked()."""
+        operation = self._db.get_operation(operation_id)
+        if operation is None or operation.file_missing:
+            return
+        self._nav.request_load_in_machine(operation.gcode_path)
 
     def _on_delete_operation(self, operation_id: int) -> None:
         self._db.delete_operation(operation_id)

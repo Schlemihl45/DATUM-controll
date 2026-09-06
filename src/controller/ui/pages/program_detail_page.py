@@ -44,6 +44,7 @@ from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.gcode_highlighter import GCodeHighlighter
 from controller.ui.widgets.gcode_viewer import GCodeViewer
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
+from controller.ui.widgets.tap_gesture import TapGestureMixin
 from controller.ui.widgets.tool_usage_card import ToolUsageCard
 
 # Same fallback MachinePage uses: the real 3D sim widget if moderngl/numpy
@@ -77,10 +78,14 @@ class _AutoSaveTextEdit(QPlainTextEdit):
         self.focus_out.emit()
 
 
-class _HistoryRow(Card):
+class _HistoryRow(TapGestureMixin, Card):
     """One superseded version in the collapsed history list — same card
     styling idiom as the tool/workpiece cards, click opens it (via `nav`)
-    as another ProgramDetailPage with the "Veraltet" banner."""
+    as another ProgramDetailPage with the "Veraltet" banner.
+
+    Tap-vs-scroll click detection comes from TapGestureMixin (listed
+    first so its mousePressEvent/mouseReleaseEvent shadow Card's own via
+    MRO) — see ui/widgets/tap_gesture.py's module docstring."""
 
     clicked = Signal()
 
@@ -112,11 +117,6 @@ class _HistoryRow(Card):
         row.addWidget(info_widget, stretch=1)
 
         self.content_layout.addLayout(row)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
 
 
 class ProgramDetailPage(QWidget):
@@ -221,7 +221,12 @@ class ProgramDetailPage(QWidget):
         root.addWidget(self._history_section)
 
         # ── Load into MachinePage (bottom-right, fixed) ──────────────────────
-        self._load_btn = QPushButton(" In Maschine laden")
+        # Label reads "Ausführen" (Abschnitt A) — internal names
+        # (_load_btn, _on_load_in_machine_clicked, request_load_in_machine)
+        # stay as they were; only the user-facing wording changed, to keep
+        # this diff to the label instead of rippling a rename through
+        # main_window.py/workpiece_browser_page.py's whole call chain.
+        self._load_btn = QPushButton(" Ausführen")
         self._load_btn.setIcon(get_icon("machine", tint=True))
         self._load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._load_btn.setMinimumHeight(40)
