@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -142,6 +142,11 @@ class MachinePage(QWidget):
         super().__init__(parent)
         self._controller  = controller
         self._loaded_path: str | None = None
+        # True once DatumSimWidget.file_ready fires for _loaded_path — set_file()
+        # is now fire-and-forget (see load_file()/_on_sim_file_ready()), so
+        # this gates Start etc. until the background compile has actually
+        # landed, not just been requested.
+        self._file_ready: bool = False
 
         controller.error_occurred.connect(self._on_error)
 
@@ -198,13 +203,16 @@ class MachinePage(QWidget):
         self._start_btn = CardButton("Start", icon=get_icon("start", tint=True), icon_size=36)
 
         # Feed-Hold is now also directly on this page (in addition to the
-        # app-wide quick bar's own button, main_window.py's feed_hold_btn —
-        # both toggle the SAME controller.set_feed_hold()/feed_hold_changed
-        # pair, so either one reflects the other's state automatically).
+        # app-wide quick bar's own button, main_window.py's feed_hold_btn).
+        # ONE-WAY trigger, not a toggle: pressing it only ever engages
+        # feed-hold (set_feed_hold(True)) — the button itself goes grey
+        # the instant it's engaged (see _sync_ui_state) and clicking it
+        # again is not how you release it; that's the green Start button's
+        # job now (see _on_start_clicked). Not checkable for exactly that
+        # reason — there is no "un-toggle via the same button" state.
         self._feed_hold_btn = CardButton(
             "Feed-Hold", icon=get_icon("player-pause", tint=True), icon_size=36,
         )
-        self._feed_hold_btn.setCheckable(True)
 
         # "Stop" = hold_axes_and_spindle(): axes AND spindle stop, program
         # position preserved, resumable via Start — NOT
@@ -227,8 +235,7 @@ class MachinePage(QWidget):
         self._single_block_btn.setProperty("variant", "single_block")
 
         self._start_btn.clicked.connect(self._on_start_clicked)
-        self._feed_hold_btn.toggled.connect(controller.set_feed_hold)
-        controller.feed_hold_changed.connect(self._feed_hold_btn.setChecked)
+        self._feed_hold_btn.clicked.connect(self._on_feed_hold_clicked)
         self._stop_btn.clicked.connect( self._on_stop_clicked)
         self._reset_btn.clicked.connect(self._on_reset_clicked)
         self._single_block_btn.toggled.connect(controller.set_single_block)
@@ -259,7 +266,10 @@ class MachinePage(QWidget):
 
         controller.position_changed.connect(self._on_position)
         controller.line_changed.connect(self._on_line)
-        controller.program_state_changed.connect(self._sync_ui_state)
+        controller.program_state_changed.connect(self._on_program_state_changed)
+        controller.feed_hold_changed.connect(self._on_feed_hold_changed)
+        self._sim.file_ready.connect(self._on_sim_file_ready)
+        self._sim.load_failed.connect(self._on_sim_load_failed)
 
         # Feed/rapid overrides feed the sim widget's estimated part-time
         # calculation — feed_changed carries a FeedData with feed_override;
@@ -291,10 +301,18 @@ class MachinePage(QWidget):
         machine backend — no machine state is required.
 
         Public: called by main_window.py in response to a
-        ProgramDetailPage's "In Maschine laden" button (see
+        ProgramDetailPage's "Ausführen" button (see
         ui.pages.workpieces_page.WorkpiecesSection.load_in_machine_requested)
         — the only way a file reaches this page now that the old fixed
         example-file button is gone (see open_workpieces_requested).
+
+        self._sim.set_file(path) is fire-and-forget (the actual G-code
+        compile now runs in a background thread — see DatumSimWidget.set_file()'s
+        docstring) — this method returns immediately, and _sync_ui_state()
+        runs once right here (with _file_ready still False, same as "no
+        file loaded" — Start stays grey) and again from _on_sim_file_ready()
+        once the compile actually lands, so Start never briefly shows
+        startable before the file is really usable.
         """
         if not Path(path).is_file():
             logger.warning("G-Code-Datei nicht gefunden: %s", path)
@@ -306,39 +324,96 @@ class MachinePage(QWidget):
             )
             return
         self._loaded_path = path
+        self._file_ready = False
+
+        # Detach the highlighter before setPlainText() and reattach it a
+        # tick later (A4): QSyntaxHighlighter re-highlights the WHOLE
+        # document synchronously on attach, which for a large file is a
+        # real, separate synchronous cost on top of setPlainText() itself.
+        # Deliberately not gated on the background compile (file_ready) —
+        # highlighting only needs the raw text already in the document, so
+        # tying it to the (slower, unrelated) compile would just delay
+        # colorization for no reason.
+        self._highlighter.setDocument(None)
         self._gcode_view.setPlainText(self._read_gcode_file(path))
         self._gcode_stack.setCurrentIndex(_GCODE_VIEWER)
+        # `self` as the context object: if this page is destroyed before
+        # the deferred call fires (e.g. torn down between test cases),
+        # Qt drops the callback instead of running it against an
+        # already-deleted C++ widget.
+        QTimer.singleShot(
+            0, self, lambda: self._highlighter.setDocument(self._gcode_view.text_edit.document())
+        )
 
-        self._sim.set_file(path)
+        self._sim.set_file(path)   # fire-and-forget — see docstring above
 
         # Update the program info card immediately (before the machine starts)
         self._program_info.set_file(path)
 
-        # Re-evaluate button states now that a file is available
+        # Re-evaluate button states now that a load has been requested —
+        # _file_ready is still False at this point, so this keeps Start
+        # grey exactly as if no file were loaded, until _on_sim_file_ready().
+        self._sync_ui_state(self._controller.program_state)
+
+    def _on_sim_file_ready(self, path: str) -> None:
+        """DatumSimWidget finished compiling a file in the background —
+        see load_file()'s docstring."""
+        if path != self._loaded_path:
+            return   # a newer load already superseded this one
+        self._file_ready = True
+        self._sync_ui_state(self._controller.program_state)
+
+    def _on_sim_load_failed(self, exc: Exception) -> None:
+        self._loaded_path = None
+        self._file_ready = False
+        self._controller.error_occurred.emit(
+            MachineError(
+                f"G-Code konnte nicht kompiliert werden: {exc}",
+                ErrorSeverity.WARNING, source="MachinePage",
+            )
+        )
         self._sync_ui_state(self._controller.program_state)
 
     # ── UI state sync (single source of truth) ────────────────────────────────
 
-    def _sync_ui_state(self, state: ProgramState) -> None:
-        """Sync sim mode + button enabled states to the current program state.
+    def _on_program_state_changed(self, state: ProgramState) -> None:
+        self._sync_ui_state(state, self._controller.feed_hold)
 
-        Enabled/disabled directly drives each button's color too — variant
-        "start"/"feed_hold"/"stop" render their accent color only while
-        :enabled in the QSS (dark.qss/light.qss), grey while :disabled —
-        so the state matrix below is the single place that decides both
-        at once:
+    def _on_feed_hold_changed(self, held: bool) -> None:
+        # feed_hold is orthogonal to ProgramState (the machine stays
+        # RUNNING throughout a feed-hold — see controller.py) — nothing
+        # else re-syncs button state when only this flag changes, so this
+        # connection is required, not redundant with the one above.
+        self._sync_ui_state(self._controller.program_state, held)
 
-            State                 Start        Feed-Hold   Stop        Reset
-            IDLE, no file         grey/off     grey/off    grey/off    on
-            IDLE, file loaded     GREEN/on     grey/off    grey/off    on
-            RUNNING               grey/off     on          RED/on      grey/off
-            PAUSED                GREEN/on     grey/off    grey/off    on
-            ERROR                 grey/off     grey/off    grey/off    on  (only way out)
+    def _sync_ui_state(self, state: ProgramState, feed_hold: bool | None = None) -> None:
+        """Sync sim mode + button enabled states to (state, feed_hold)
+        together — the single place that decides every button's
+        enabled/color at once. feed_hold defaults to reading it live from
+        the controller so existing single-arg call sites keep working.
 
-        Feed-Hold and Stop are both only meaningful while a program is
-        actually RUNNING (freezing motion / stopping axes+spindle) —
-        neither has anything to act on otherwise.
+        Feed-Hold is a ONE-WAY trigger, not a toggle: once engaged, this
+        button (and main_window.py's quick-bar twin) go grey/hidden — the
+        only way to release it is the green Start button (clears the
+        freeze, program never stopped) or the red Stop button
+        (hold_axes_and_spindle(), a full stop that also clears feed-hold —
+        see MachineController.hold_axes_and_spindle()).
+
+            State      feed_hold   Start                  Feed-Hold  Stop        Reset
+            IDLE, no file   False  grey/off               grey/off   grey/off    on
+            IDLE, ready     False  GREEN/on               grey/off   grey/off    on
+            RUNNING         False  grey/off               on         RED/on      grey/off
+            RUNNING         True   GREEN/on (clears hold)  grey/off   RED/on      grey/off
+            PAUSED          False  GREEN/on (resumes)      grey/off   grey/off    on
+            ERROR           False  grey/off                grey/off   grey/off    on (only way out)
+
+        PAUSED/ERROR + feed_hold=True are not reachable: SimulatedBackend
+        only ever sets feed_hold while RUNNING, and every transition away
+        from RUNNING (stop_program(), rewind_program(), and
+        hold_axes_and_spindle() per its own fix) clears it.
         """
+        if feed_hold is None:
+            feed_hold = self._controller.feed_hold
         now_running = state == ProgramState.RUNNING
 
         self._sim.set_mode("MACHINE" if now_running else "SIM")
@@ -348,10 +423,10 @@ class MachinePage(QWidget):
             self._sim.set_line(self._controller.current_line)
         self._sim.set_state(state.name)
 
-        file_loaded = self._loaded_path is not None
+        file_loaded = self._loaded_path is not None and self._file_ready
         startable = state in (ProgramState.IDLE, ProgramState.PAUSED)
-        self._start_btn.setEnabled(file_loaded and startable)
-        self._feed_hold_btn.setEnabled(now_running)
+        self._start_btn.setEnabled((file_loaded and startable) or (now_running and feed_hold))
+        self._feed_hold_btn.setEnabled(now_running and not feed_hold)
         self._stop_btn.setEnabled(now_running)
         # Reset is the only way out of ERROR, and stays available while
         # paused/idle — just never while a program is actually RUNNING
@@ -391,6 +466,13 @@ class MachinePage(QWidget):
         starts exactly as before with no perceptible delay; a detected
         collision blocks Start behind a confirmation dialog instead.
         """
+        if self._controller.feed_hold:
+            # Program never stopped — Start's job here is just to release
+            # the freeze, not run_program()/resume_program() again. See
+            # _sync_ui_state()'s state matrix and _on_feed_hold_clicked().
+            self._controller.set_feed_hold(False)
+            return
+
         if self._controller.program_state == ProgramState.PAUSED:
             self._controller.resume_program()
             return
@@ -399,6 +481,19 @@ class MachinePage(QWidget):
             # Shouldn't happen (button is disabled), but guard anyway —
             # send the user to pick a real program instead of guessing one.
             self.open_workpieces_requested.emit()
+            return
+
+        if not self._file_ready:
+            # The background compile (DatumSimWidget.set_file() — see its
+            # docstring) hasn't landed yet. This must be a hard, silent
+            # no-op, not a fallthrough: self._sim.tool_changes/_last_program
+            # are still stale/empty at this point, which would make
+            # validate_tools() and presim_check_collisions() below both
+            # trivially "pass" against a program that was never actually
+            # checked — a real safety gap, not just a cosmetic race. The
+            # button itself is already disabled while this is true (see
+            # _sync_ui_state()); this is the defensive backstop for any
+            # caller that bypasses the button (tests included).
             return
 
         tool_validation = validate_tools(self._sim.tool_changes, get_tool_by_pocket)
@@ -482,11 +577,19 @@ class MachinePage(QWidget):
         box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
         box.exec()
 
+    def _on_feed_hold_clicked(self) -> None:
+        """One-way trigger: engages feed-hold. Releasing it happens via
+        the Start button instead (_on_start_clicked) — this button is
+        disabled the instant feed-hold engages (see _sync_ui_state)."""
+        self._controller.set_feed_hold(True)
+
     def _on_stop_clicked(self) -> None:
         """Stops axes AND spindle, program position preserved — resume via
         Start. See hold_axes_and_spindle()'s own docstring; deliberately
         NOT stop_program() (that aborts and loses position — see the
-        control-column comment above this button's construction)."""
+        control-column comment above this button's construction). Also
+        clears feed-hold if one was active (hold_axes_and_spindle() itself
+        does this) — a full stop subsumes a mere motion-freeze."""
         self._controller.hold_axes_and_spindle()
 
     def _on_reset_clicked(self) -> None:

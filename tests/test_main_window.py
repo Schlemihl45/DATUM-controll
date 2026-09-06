@@ -78,11 +78,34 @@ def test_light_button_sends_mdi_without_crashing(qtbot, machine_on):
 
 
 def test_start_button_runs_program_via_controller(qtbot, machine_on):
+    """Verifies Start/Stop wiring reaches the controller — NOT the
+    collision pre-check dialog's UX, which is why collision detection is
+    disabled here: _EXAMPLE_GCODE_PATH's bundled example program has a
+    real, correctly-detected shank collision at line 12 (confirmed via
+    run_prepass()), and its confirmation dialog defaults to "Abbrechen"
+    with no one there to click "Trotzdem starten" in a headless test —
+    that's a real, intentional safety behavior, not a bug, but it isn't
+    what this test is about."""
     win = _make_window(machine_on)
     qtbot.addWidget(win)
 
     machine_page = win._stack.widget(_MACHINE_PAGE_INDEX)
-    machine_page.load_file(_EXAMPLE_GCODE_PATH)
+    # Patch this widget's OWN method rather than the global
+    # AppSettings.collision_detection_enabled singleton — flipping that
+    # global setting fires collision_detection_enabled_changed at every
+    # SimPanel instance alive in the process, including ones left over
+    # (with already-C++-deleted checkboxes) from earlier tests in the
+    # same session, causing an unrelated RuntimeError there.
+    machine_page._sim._effective_collision_enabled = lambda: False
+
+    with qtbot.waitSignal(machine_page._sim.file_ready, timeout=5000):
+        machine_page.load_file(_EXAMPLE_GCODE_PATH)
+    # load_file()'s G-code compile now runs in a background thread (see
+    # DatumSimWidget.set_file()) — _on_start_clicked() is a deliberate,
+    # hard no-op until _file_ready is True (tool validation/collision
+    # pre-check would otherwise run against a stale/empty program), so
+    # this test must wait for the real completion signal rather than
+    # assuming load_file() itself was synchronous, as it used to be.
     machine_page._on_start_clicked()
     machine_on.poll_once()
 

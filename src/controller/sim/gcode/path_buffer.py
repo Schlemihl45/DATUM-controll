@@ -38,14 +38,26 @@ class PathBuffer:
 
         for seg in segments:
             pts, feeds = PathBuffer._tessellate(seg, max_step_mm)
+            if not pts:
+                continue
 
-            for p, f in zip(pts, feeds):
-                step     = float(np.linalg.norm(p - positions[-1]))
-                total_s += step
-                positions.append(p)
-                arc_lengths.append(total_s)
-                feed_rates.append(f)
-                line_ids.append(seg.line_index)   # line_index, not line_number
+            # Vectorized replacement for what used to be a per-point Python
+            # loop calling np.linalg.norm() once per tessellated point —
+            # ~11,000 individual numpy calls for a modest 1000-line program,
+            # each paying fixed dispatch overhead regardless of how trivial
+            # the actual math is. One batched norm() call per SEGMENT
+            # (hundreds, not thousands) removes that overhead entirely; no
+            # per-point conditional logic existed in this loop to preserve.
+            pts_arr = np.asarray(pts, dtype='f4')                  # (n, 3)
+            prev    = np.vstack([positions[-1][None, :], pts_arr[:-1]])
+            steps   = np.linalg.norm(pts_arr - prev, axis=1)       # (n,)
+            seg_arc = total_s + np.cumsum(steps)
+            total_s = float(seg_arc[-1])
+
+            positions.extend(pts_arr)
+            arc_lengths.extend(seg_arc.tolist())
+            feed_rates.extend(feeds)
+            line_ids.extend([seg.line_index] * len(pts))   # line_index, not line_number
 
         # Only numpy arrays remain — no doubled RAM usage
         self.points:        np.ndarray = np.array(positions,   dtype='f4')

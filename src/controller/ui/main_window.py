@@ -192,13 +192,17 @@ class MainWindow(QMainWindow):
 
         # Feed Hold — reachable from this app-wide quick bar (outside
         # self._stack, so it survives page navigation) regardless of which
-        # page is showing, per "von überall gestoppt werden kann". Only
-        # shown while a program is actually RUNNING (see
-        # _on_program_state_for_quickbar) — toggles the real
-        # MachineController.set_feed_hold(); mirrors MachinePage's own
-        # Feed-Hold button (both toggle the same controller state, see
-        # that page's control-column construction) so the same control is
-        # reachable from anywhere, not just while MachinePage is showing.
+        # page is showing, per "von überall gestoppt werden kann". Mirrors
+        # MachinePage's own Feed-Hold button (both engage the same
+        # controller state) so the control is reachable from anywhere, not
+        # just while MachinePage is showing. ONE-WAY trigger, not a toggle
+        # — pressing it only ever engages feed-hold; the button disappears
+        # the instant it's engaged (see _sync_feed_hold_quickbar()) rather
+        # than staying visible in a "checked" state, since there is no
+        # quick-bar Start button to release it from — releasing a
+        # quick-bar-engaged feed-hold means going to MachinePage (Start or
+        # Stop), an accepted consequence of this bar having no resume
+        # control of its own.
         # Placed left of Return: this bar has no separate Stop button
         # (that lives only on MachinePage's own control column now), so
         # Feed Hold's QSS (dark.qss/light.qss) carries Stop's red as its own
@@ -207,15 +211,14 @@ class MainWindow(QMainWindow):
             "Feed Hold", icon=get_icon("player-pause", tint=True, size=QSize(40, 40)),
             icon_size=40,
         )
-        self.feed_hold_btn.setCheckable(True)
         self.feed_hold_btn.setProperty("variant", "feed_hold")
         self.feed_hold_btn.setFixedSize(100, 100)
         self.feed_hold_btn.setVisible(False)
-        self.feed_hold_btn.toggled.connect(self._controller.set_feed_hold)
-        self._controller.feed_hold_changed.connect(self.feed_hold_btn.setChecked)
+        self.feed_hold_btn.clicked.connect(self._on_feed_hold_clicked)
         self._controller.program_state_changed.connect(
             self._on_program_state_for_quickbar
         )
+        self._controller.feed_hold_changed.connect(self._on_feed_hold_for_quickbar)
         button_row.addWidget(self.feed_hold_btn)
 
         # No separate quick-bar "Halt"/hold_axes_and_spindle button anymore
@@ -316,12 +319,29 @@ class MainWindow(QMainWindow):
         freezing while load_file() is running.
         """
         self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
-        QTimer.singleShot(0, lambda: self._machine_page.load_file(gcode_path))
+        # `self` as the context object — see machine_page.py's identical
+        # pattern for why (dropped instead of run against an already-torn-
+        # down window if this fires after destruction).
+        QTimer.singleShot(0, self, lambda: self._machine_page.load_file(gcode_path))
+
+    def _on_feed_hold_clicked(self) -> None:
+        self._controller.set_feed_hold(True)
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:
-        """Feed Hold only makes sense — and is only shown — while a
-        program is actually RUNNING; it stays out of the way otherwise."""
-        self.feed_hold_btn.setVisible(state == ProgramState.RUNNING)
+        self._sync_feed_hold_quickbar(state, self._controller.feed_hold)
+
+    def _on_feed_hold_for_quickbar(self, held: bool) -> None:
+        # feed_hold is orthogonal to ProgramState (see MachineController.
+        # feed_hold's docstring) — program_state_changed alone would never
+        # fire when only this flag changes, so this connection is required.
+        self._sync_feed_hold_quickbar(self._controller.program_state, held)
+
+    def _sync_feed_hold_quickbar(self, state: ProgramState, held: bool) -> None:
+        """Feed Hold only makes sense, and is only shown, while a program
+        is RUNNING and not already held — it disappears the instant it's
+        engaged (one-way trigger, not a toggle; see its construction
+        comment) and stays out of the way otherwise."""
+        self.feed_hold_btn.setVisible(state == ProgramState.RUNNING and not held)
 
     # ------------------------------------------------------------------
     # Quick buttons -> AbstractBackend (via MachineController)
