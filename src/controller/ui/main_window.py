@@ -195,9 +195,12 @@ class MainWindow(QMainWindow):
         # page is showing, per "von überall gestoppt werden kann". Only
         # shown while a program is actually RUNNING (see
         # _on_program_state_for_quickbar) — toggles the real
-        # MachineController.set_feed_hold(), distinct from MachinePage's
-        # own Pause button (pause_program(), a full resumable pause).
-        # Placed left of Return: this bar has no separate Stop button, so
+        # MachineController.set_feed_hold(); mirrors MachinePage's own
+        # Feed-Hold button (both toggle the same controller state, see
+        # that page's control-column construction) so the same control is
+        # reachable from anywhere, not just while MachinePage is showing.
+        # Placed left of Return: this bar has no separate Stop button
+        # (that lives only on MachinePage's own control column now), so
         # Feed Hold's QSS (dark.qss/light.qss) carries Stop's red as its own
         # default/warning color instead of the amber some other toggles use.
         self.feed_hold_btn = CardButton(
@@ -215,29 +218,15 @@ class MainWindow(QMainWindow):
         )
         button_row.addWidget(self.feed_hold_btn)
 
-        # New "Halt" button (Abschnitt G) — stops axes AND spindle while
-        # keeping program position (MachineController.hold_axes_and_spindle(),
-        # resumable via MachinePage's own Start button, same as Feed Hold's
-        # own resume path). Deliberately NOT named/wired like
-        # MachinePage's existing self._stop_btn, which despite its
-        # internal name is labeled "Pause" in the UI and calls
-        # pause_program() (leaves the spindle running) — confusable-looking
-        # controls with different real-world effect are a mix-up risk in
-        # an actual emergency, so this one uses a distinct spindle+stop
-        # icon and a label ("Halt") that doesn't read as a synonym for
-        # that page's "Pause" button.
-        self._hold_axes_spindle_btn = CardButton(
-            "Halt", icon=get_icon("spindle", tint=True, size=QSize(40, 40)),
-            icon_size=40,
-        )
-        self._hold_axes_spindle_btn.setProperty("variant", "feed_hold")
-        self._hold_axes_spindle_btn.setFixedSize(100, 100)
-        self._hold_axes_spindle_btn.setVisible(False)
-        self._hold_axes_spindle_btn.setToolTip(
-            "Achsen und Spindel anhalten (Programmposition bleibt erhalten)"
-        )
-        self._hold_axes_spindle_btn.clicked.connect(self._controller.hold_axes_and_spindle)
-        button_row.addWidget(self._hold_axes_spindle_btn)
+        # No separate quick-bar "Halt"/hold_axes_and_spindle button anymore
+        # — the quick bar carries Feed Hold only, per the current control
+        # layout: MachinePage's own control column now has the full
+        # Start/Feed-Hold/Stop/Reset/Single-Step set (including its own
+        # Stop button wired to hold_axes_and_spindle()), so a duplicate
+        # entry point for the same action in the quick bar would just be
+        # two controls for one thing, and — as the prior version of this
+        # button demonstrated — a second stop-like control next to Feed
+        # Hold risks being mixed up with it under time pressure.
 
         self.return_btn = CardButton(icon=get_icon("return"), icon_size=48)
         self.return_btn.setFixedSize(100, 100)
@@ -314,14 +303,9 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_MACHINE_PAGE_INDEX)
 
     def _on_program_state_for_quickbar(self, state: ProgramState) -> None:
-        """Feed Hold — and the new Halt button (hold_axes_and_spindle(),
-        Abschnitt G) — only make sense, and are only shown, while a
-        program is actually RUNNING; both stay out of the way otherwise.
-        One trigger point for both, deliberately, rather than a second
-        program_state_changed connection duplicating this one."""
-        running = state == ProgramState.RUNNING
-        self.feed_hold_btn.setVisible(running)
-        self._hold_axes_spindle_btn.setVisible(running)
+        """Feed Hold only makes sense — and is only shown — while a
+        program is actually RUNNING; it stays out of the way otherwise."""
+        self.feed_hold_btn.setVisible(state == ProgramState.RUNNING)
 
     # ------------------------------------------------------------------
     # Quick buttons -> AbstractBackend (via MachineController)
