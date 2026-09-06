@@ -78,6 +78,17 @@ class GpuVoxelGrid:
     stock :
         Geometry + resolution description.  ``stock.bbox`` must already be
         set (call ``stock.build_bbox(path)`` before constructing the grid).
+    material :
+        Optional pre-built (Nz, Ny, Nx) uint8 material array (from a prior
+        ``solid_material(stock)`` call) to adopt as-is instead of building
+        one here — lets a caller (DatumSimWidget._schedule_voxel_sim())
+        compute this numpy allocation, which can be tens of milliseconds
+        or more for a large/fine-grained stock, in a background thread
+        ahead of time, so constructing this GL-bound object (which MUST
+        happen on the GUI thread with a current context) does as little
+        work as possible beyond the actual GPU upload. None (default)
+        preserves the original behavior of building it here via
+        _init_material().
     """
 
     # Voxels per tile axis.  A 16³ tile = 4096 bytes — small enough that a
@@ -85,7 +96,12 @@ class GpuVoxelGrid:
     # enough to amortise the tile-loop overhead in carve().
     TILE: int = 16
 
-    def __init__(self, ctx: moderngl.Context, stock: StockDefinition) -> None:
+    def __init__(
+        self,
+        ctx: moderngl.Context,
+        stock: StockDefinition,
+        material: np.ndarray | None = None,
+    ) -> None:
         self._ctx        = ctx
         self._stock      = stock
         self._bbox       = stock.bbox
@@ -96,9 +112,14 @@ class GpuVoxelGrid:
 
         # ── CPU material array ────────────────────────────────────────────────
         # Layout: _material[iz, iy, ix]  →  255 = workpiece, 0 = air
-        # _init_material() builds and assigns it (via solid_material()).
+        # Adopt a pre-built array if given (see *material* above); otherwise
+        # _init_material() builds one here (via solid_material()), same as
+        # before this parameter existed.
         self._material: np.ndarray
-        self._init_material()
+        if material is not None:
+            self._material = material
+        else:
+            self._init_material()
 
         # ── GPU Texture3D (r8 — unsigned normalised, sampled as 0…1) ─────────
         # Texture3D size = (width, height, depth) = (Nx, Ny, Nz)

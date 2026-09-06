@@ -183,27 +183,52 @@ class MachinePage(QWidget):
         # ── Machine control buttons (right column) ────────────────────────────
         # icon_size=36 keeps a 100×100 Card (16px margins → 68px content)
         # balanced: 36px icon + 4px gap + ~16px label = 56px, neatly centred.
+        # Five controls, stacked vertically — Start / Feed-Hold / Stop /
+        # Reset / Single-Step. This replaces the earlier Start/"Pause"
+        # (pause_program(), spindle kept running)/Reset/Single-Block
+        # layout, which had two problems: "Pause" was a name for
+        # pause_program() that read as a synonym for the app-wide quick
+        # bar's actual Feed Hold button (set_feed_hold()) despite being a
+        # different, more drastic action; and pause_program() itself (axes
+        # stop, spindle keeps spinning) is no longer wired to any UI
+        # control at all — hold_axes_and_spindle() (axes AND spindle stop,
+        # still resumable via Start) is the one safe stop this page now
+        # offers, so it has no ambiguous "is the spindle still running?"
+        # question left for the operator.
         self._start_btn = CardButton("Start", icon=get_icon("start", tint=True), icon_size=36)
-        # Labeled "Pause" (not "Feed hold") — it calls pause_program(), a
-        # real resumable pause, not MachineController.set_feed_hold()'s
-        # feed-freeze-without-stopping-the-interpreter semantics. That real
-        # Feed Hold now has its own button in the app-wide quick bar
-        # (main_window.py) so it's reachable while a program runs
-        # regardless of which page is showing — this button staying
-        # mislabeled "Feed hold" too would make the two easy to confuse.
-        self._stop_btn  = CardButton("Pause", icon=get_icon("stop", tint=True), icon_size=36)
+
+        # Feed-Hold is now also directly on this page (in addition to the
+        # app-wide quick bar's own button, main_window.py's feed_hold_btn —
+        # both toggle the SAME controller.set_feed_hold()/feed_hold_changed
+        # pair, so either one reflects the other's state automatically).
+        self._feed_hold_btn = CardButton(
+            "Feed-Hold", icon=get_icon("player-pause", tint=True), icon_size=36,
+        )
+        self._feed_hold_btn.setCheckable(True)
+
+        # "Stop" = hold_axes_and_spindle(): axes AND spindle stop, program
+        # position preserved, resumable via Start — NOT
+        # MachineController.stop_program() (a destructive abort, position
+        # lost, per that method's own docstring). Deliberate choice: a
+        # button labeled plain "Stop" that quietly discarded program
+        # position would be a data-loss trap for an operator expecting to
+        # resume afterward.
+        self._stop_btn  = CardButton("Stop", icon=get_icon("stop", tint=True), icon_size=36)
         self._reset_btn = CardButton("Reset", icon=get_icon("reset", tint=True), icon_size=36)
         self._single_block_btn = CardButton(
-            "Single Block", icon=get_icon("single_block", tint=True), icon_size=32
+            "Single-Step", icon=get_icon("single_block", tint=True), icon_size=32
         )
         self._single_block_btn.setCheckable(True)
 
         self._start_btn.setProperty("variant", "start")
+        self._feed_hold_btn.setProperty("variant", "feed_hold")
         self._stop_btn.setProperty( "variant", "stop")
         self._reset_btn.setProperty("variant", "reset")
         self._single_block_btn.setProperty("variant", "single_block")
 
         self._start_btn.clicked.connect(self._on_start_clicked)
+        self._feed_hold_btn.toggled.connect(controller.set_feed_hold)
+        controller.feed_hold_changed.connect(self._feed_hold_btn.setChecked)
         self._stop_btn.clicked.connect( self._on_stop_clicked)
         self._reset_btn.clicked.connect(self._on_reset_clicked)
         self._single_block_btn.toggled.connect(controller.set_single_block)
@@ -211,7 +236,7 @@ class MachinePage(QWidget):
 
         controls_col = QVBoxLayout()
         controls_col.setSpacing(8)
-        for btn in (self._start_btn, self._stop_btn,
+        for btn in (self._start_btn, self._feed_hold_btn, self._stop_btn,
                     self._reset_btn, self._single_block_btn):
             btn.setFixedSize(100, 100)
             controls_col.addWidget(btn)
@@ -298,16 +323,21 @@ class MachinePage(QWidget):
         """Sync sim mode + button enabled states to the current program state.
 
         Enabled/disabled directly drives each button's color too — variant
-        "start"/"stop" render green/red only while :enabled in the QSS
-        (dark.qss/light.qss), grey while :disabled — so the state matrix
-        below is the single place that decides both at once:
+        "start"/"feed_hold"/"stop" render their accent color only while
+        :enabled in the QSS (dark.qss/light.qss), grey while :disabled —
+        so the state matrix below is the single place that decides both
+        at once:
 
-            State                 Start        Pause/Stop   Reset
-            IDLE, no file         grey/off     grey/off     on
-            IDLE, file loaded     GREEN/on     grey/off     on
-            RUNNING               grey/off     RED/on       grey/off
-            PAUSED                GREEN/on     grey/off     on
-            ERROR                 grey/off     grey/off     on  (only way out)
+            State                 Start        Feed-Hold   Stop        Reset
+            IDLE, no file         grey/off     grey/off    grey/off    on
+            IDLE, file loaded     GREEN/on     grey/off    grey/off    on
+            RUNNING               grey/off     on          RED/on      grey/off
+            PAUSED                GREEN/on     grey/off    grey/off    on
+            ERROR                 grey/off     grey/off    grey/off    on  (only way out)
+
+        Feed-Hold and Stop are both only meaningful while a program is
+        actually RUNNING (freezing motion / stopping axes+spindle) —
+        neither has anything to act on otherwise.
         """
         now_running = state == ProgramState.RUNNING
 
@@ -321,6 +351,7 @@ class MachinePage(QWidget):
         file_loaded = self._loaded_path is not None
         startable = state in (ProgramState.IDLE, ProgramState.PAUSED)
         self._start_btn.setEnabled(file_loaded and startable)
+        self._feed_hold_btn.setEnabled(now_running)
         self._stop_btn.setEnabled(now_running)
         # Reset is the only way out of ERROR, and stays available while
         # paused/idle — just never while a program is actually RUNNING
@@ -452,8 +483,11 @@ class MachinePage(QWidget):
         box.exec()
 
     def _on_stop_clicked(self) -> None:
-        if self._controller.program_state == ProgramState.RUNNING:
-            self._controller.pause_program()
+        """Stops axes AND spindle, program position preserved — resume via
+        Start. See hold_axes_and_spindle()'s own docstring; deliberately
+        NOT stop_program() (that aborts and loses position — see the
+        control-column comment above this button's construction)."""
+        self._controller.hold_axes_and_spindle()
 
     def _on_reset_clicked(self) -> None:
         if self._controller.program_state == ProgramState.RUNNING:

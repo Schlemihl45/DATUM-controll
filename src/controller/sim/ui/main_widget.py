@@ -50,7 +50,7 @@ from controller.sim.core.settings             import AppSettings
 # Voxel sim — pure Python/numpy + GLSL raymarching (no C++ required)
 try:
     from controller.sim.voxel.stock      import StockDefinition, StockShape
-    from controller.sim.voxel.gpu_grid   import GpuVoxelGrid
+    from controller.sim.voxel.gpu_grid   import GpuVoxelGrid, solid_material
     from controller.sim.voxel.carver     import VoxelCarver
     from controller.sim.voxel.controller import VoxelSimController
     from controller.sim.voxel.renderer   import VoxelRenderer
@@ -105,6 +105,12 @@ class DatumSimWidget(QWidget):
     # instead of QTimer.singleShot() from the worker thread.
     _prepass_done = Signal(int, object)
 
+    # Internal plumbing for the voxel-grid CPU build's background->main
+    # thread handoff (generation, StockDefinition, material ndarray) — see
+    # _schedule_voxel_sim()'s docstring. Same pattern/reasoning as
+    # _prepass_done above.
+    _voxel_material_ready = Signal(int, object, object)
+
     _TOOL_MAP = {
         "Endmill":    ToolMode.CYLINDER,
         "Point":      ToolMode.POINT,
@@ -156,6 +162,22 @@ class DatumSimWidget(QWidget):
         self._voxel_renderer: VoxelRenderer | None      = None
         self._pending_voxel_setup: bool = False
 
+        # Voxel-grid CPU build (solid_material() over the whole stock
+        # volume — a numpy allocation that can run into tens of
+        # milliseconds or more for a large/fine-grained stock) runs in a
+        # background thread — see _schedule_voxel_sim(). generation/abort
+        # guard against a stale worker's result landing after a newer
+        # load/settings-change/teardown superseded it, same pattern as
+        # _prepass_generation/_prepass_abort above. The pending_voxel_*
+        # pair carries a completed worker's result over to
+        # _create_voxel_sim(), which only ever does the GL-dependent half
+        # (GpuVoxelGrid's texture upload + Carver/Controller/Renderer) —
+        # never solid_material() itself anymore.
+        self._voxel_build_generation: int             = 0
+        self._voxel_build_abort:      threading.Event = threading.Event()
+        self._pending_voxel_stock:    "StockDefinition | None" = None
+        self._pending_voxel_material: "np.ndarray | None"      = None
+
         # Carving runs in a background thread so the main-thread controller UI
         # is never blocked by long numpy operations (deep plunges etc.).
         self._carve_thread: threading.Thread | None = None
@@ -177,6 +199,7 @@ class DatumSimWidget(QWidget):
         self._prepass_abort:      threading.Event                      = threading.Event()
         self._pending_prepass_cb: Callable[["CollisionPrepassResult | None"], None] | None = None
         self._prepass_done.connect(self._on_prepass_done)
+        self._voxel_material_ready.connect(self._on_voxel_material_ready)
 
         # ── Signal connections ────────────────────────────────────────────────
         # Tool/path display mode are read straight from AppSettings rather
@@ -397,7 +420,79 @@ class DatumSimWidget(QWidget):
     # ── Voxel sim lifecycle ───────────────────────────────────────────────────
 
     def _schedule_voxel_sim(self) -> None:
-        """Create voxel objects now if GL is ready, or defer until first paint."""
+        """(Re)start the voxel grid's CPU-side build in the background,
+        then hand the GL-dependent finish (_create_voxel_sim()) to
+        _on_voxel_material_ready() once it completes.
+
+        Building the material array (solid_material() — a numpy
+        allocation across the WHOLE stock volume, potentially tens of
+        millions of voxels for a large part at a fine voxel_size) used to
+        run synchronously right here, on whatever thread called
+        set_file() — i.e. the GUI thread, blocking the entire UI for the
+        duration on every single file load ("Ausführen" included). It now
+        only ever runs in a background thread; this method itself does
+        nothing heavier than build_bbox() (a single vectorized min/max
+        pass over the path, cheap even for long programs) before handing
+        off.
+
+        generation/abort follow the exact same pattern as
+        _start_prepass()'s: a bumped generation number plus a fresh
+        Event bound to this call only, so a stale worker's belated result
+        (a superseding load, settings change, or teardown arrived while
+        it was still running) is dropped by _on_voxel_material_ready()
+        rather than silently overwriting a newer state.
+        """
+        self._voxel_build_generation += 1
+        self._voxel_build_abort.set()
+
+        if (
+            not _VOXEL_AVAILABLE
+            or self._last_program is None
+            or not AppSettings.instance().voxel_enabled
+        ):
+            return
+
+        gen = self._voxel_build_generation
+        my_abort = threading.Event()
+        self._voxel_build_abort = my_abort
+
+        s = AppSettings.instance()
+        try:
+            shape = StockShape(s.stock_shape)
+        except ValueError:
+            shape = StockShape.BOUNDING_BOX
+
+        stock = StockDefinition(
+            shape           = shape,
+            voxel_size      = s.voxel_size,
+            z_offset_mm     = s.stock_z_offset_mm,
+            height_mm       = s.stock_height_mm,
+            round_radius_mm = s.stock_round_radius_mm,
+            width_mm        = s.stock_width_mm,
+            depth_mm        = s.stock_depth_mm,
+            x_offset_mm     = s.stock_x_offset_mm,
+            y_offset_mm     = s.stock_y_offset_mm,
+        )
+        stock.build_bbox(self._last_program.path)
+
+        def _worker() -> None:
+            material = solid_material(stock)
+            if not my_abort.is_set():
+                self._voxel_material_ready.emit(gen, stock, material)
+
+        threading.Thread(
+            target=_worker, daemon=True, name="voxel-material-build",
+        ).start()
+
+    def _on_voxel_material_ready(self, gen: int, stock, material) -> None:
+        """Slot for _voxel_material_ready — runs on the GUI thread (Qt
+        queues the cross-thread emit). Drops the result outright if a
+        newer trigger already superseded it (see _schedule_voxel_sim()'s
+        docstring), same guard _on_prepass_done() uses for the prepass."""
+        if gen != self._voxel_build_generation:
+            return
+        self._pending_voxel_stock = stock
+        self._pending_voxel_material = material
         if hasattr(self.viewport, "ctx"):
             self._create_voxel_sim()
         else:
@@ -406,38 +501,31 @@ class DatumSimWidget(QWidget):
 
     def _create_voxel_sim(self) -> None:
         """
-        Instantiate GpuVoxelGrid, VoxelCarver, VoxelSimController, VoxelRenderer.
+        Instantiate GpuVoxelGrid, VoxelCarver, VoxelSimController, VoxelRenderer
+        from the already-computed self._pending_voxel_stock/_material (see
+        _schedule_voxel_sim()/_on_voxel_material_ready() — the CPU-heavy
+        solid_material() build has already happened in a background
+        thread by the time this runs). Only GL-dependent work is left
+        here: the Texture3D upload and the carver/controller/renderer
+        construction.
 
-        Must be called with the GL context current (or makeCurrent is called here).
+        Must be called with a ready GL context (viewport.ctx) — either
+        because _on_voxel_material_ready() found one immediately, or
+        because the eventFilter() below is firing this after the
+        viewport's first paint.
         """
         if not _VOXEL_AVAILABLE or self._last_program is None:
             return
-
-        s = AppSettings.instance()
+        stock = self._pending_voxel_stock
+        material = self._pending_voxel_material
+        if stock is None or material is None:
+            return   # nothing pending — stale eventFilter fire, or already consumed
+        self._pending_voxel_stock = None
+        self._pending_voxel_material = None
 
         self.viewport.makeCurrent()
         try:
-            # Build stock definition from persisted settings, then derive bbox
-            # from the cutting-move extent of the loaded program.
-            try:
-                shape = StockShape(s.stock_shape)
-            except ValueError:
-                shape = StockShape.BOUNDING_BOX
-
-            stock = StockDefinition(
-                shape           = shape,
-                voxel_size      = s.voxel_size,
-                z_offset_mm     = s.stock_z_offset_mm,
-                height_mm       = s.stock_height_mm,
-                round_radius_mm = s.stock_round_radius_mm,
-                width_mm        = s.stock_width_mm,
-                depth_mm        = s.stock_depth_mm,
-                x_offset_mm     = s.stock_x_offset_mm,
-                y_offset_mm     = s.stock_y_offset_mm,
-            )
-            stock.build_bbox(self._last_program.path)
-
-            grid  = GpuVoxelGrid(self.viewport.ctx, stock)
+            grid  = GpuVoxelGrid(self.viewport.ctx, stock, material=material)
             carver = VoxelCarver(grid)
 
             active_tool = self._current_tool or get_tool_by_pocket(1)
@@ -471,6 +559,22 @@ class DatumSimWidget(QWidget):
 
     def _teardown_voxel_sim(self) -> None:
         """Stop the controller and remove the renderer from the viewport."""
+        # Invalidate any in-flight/completed-but-not-yet-consumed voxel
+        # material build outright — bump the generation and drop whatever
+        # is pending now, so a background worker that's still running (or
+        # one that already finished but hasn't been picked up via
+        # _create_voxel_sim() yet, e.g. still waiting on the eventFilter's
+        # first paint) can never attach a grid to a program this teardown
+        # is meant to get rid of. Needed here specifically (not just at
+        # _schedule_voxel_sim()'s own next call) because some callers
+        # (_on_voxel_enabled_changed(False)) tear down WITHOUT scheduling
+        # a new build afterward.
+        self._voxel_build_generation += 1
+        self._voxel_build_abort.set()
+        self._pending_voxel_stock = None
+        self._pending_voxel_material = None
+        self._pending_voxel_setup = False
+
         # Signal the carving thread to abort and wait briefly for it to exit.
         # This prevents the thread from writing to the (about-to-be-freed) grid.
         self._carve_abort.set()
