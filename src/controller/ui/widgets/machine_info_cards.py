@@ -127,7 +127,11 @@ def _build_value_row(
     icon_label = QLabel()
     icon_label.setObjectName("InfoIcon")
     icon_label.setFixedSize(icon_size)
-    icon_label.setPixmap(get_icon(icon_name, size=icon_size).pixmap(icon_size))
+    icon_label.setPixmap(
+        get_icon(
+            icon_name, size=icon_size, tint=True, selector="QLabel#InfoIcon",
+        ).pixmap(icon_size)
+    )
     row.add_widget(icon_label)
 
     row.add_gap(GAP_ICON_TO_LETTER_PCT)
@@ -161,6 +165,7 @@ class AxisPositionCard(_LiveValueCard):
 
     def __init__(self, controller: MachineController, parent: QWidget | None = None) -> None:
         super().__init__(title="Position", parent=parent)
+        self.setProperty("variant", "info")
         self._controller = controller
 
         self._position_labels: dict[str, QLabel] = {}
@@ -187,6 +192,7 @@ class FeedrateCard(_LiveValueCard):
 
     def __init__(self, controller: MachineController, parent: QWidget | None = None) -> None:
         super().__init__(title="Feedrate", parent=parent)
+        self.setProperty("variant", "info")
         self._controller = controller
 
         row, self._feedrate_value = _build_value_row("spindle_moving", None, "[mm min⁻¹]")
@@ -206,6 +212,7 @@ class SpindleCard(_LiveValueCard):
 
     def __init__(self, controller: MachineController, parent: QWidget | None = None) -> None:
         super().__init__(title="Spindle", parent=parent)
+        self.setProperty("variant", "info")
         self._controller = controller
 
         self._load_bar = LoadBar(radius=12, parent=self)

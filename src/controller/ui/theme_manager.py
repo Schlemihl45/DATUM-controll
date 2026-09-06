@@ -30,6 +30,8 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Signal, QObject
 from PySide6.QtWidgets import QApplication
 
+from controller.ui import icon_loader
+
 logger = logging.getLogger(__name__)
 
 # Directory containing all .qss theme files
@@ -112,6 +114,12 @@ class ThemeManager(QObject):
         self._app.setStyleSheet(qss)
         self._current = theme
         self._settings.setValue(_SETTINGS_KEY, theme)
+
+        # Newly loaded tint=True icons should read their color from THIS
+        # theme's file from now on (see icon_loader.set_active_theme_path's
+        # docstring for the known live-icon-refresh limitation this does
+        # NOT solve).
+        icon_loader.set_active_theme_path(qss_path)
 
         # Update Viewport corner-fill shaders to match new window gradient
         top, bottom = _THEME_WINDOW_GRADIENT.get(theme, ("#141b26", "#0b0f16"))
