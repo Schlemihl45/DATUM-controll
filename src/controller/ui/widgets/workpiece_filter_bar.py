@@ -1,26 +1,21 @@
 """
-ui/widgets/workpiece_filter_bar.py — WorkpiecesPage's search/filter bar,
-directly below its header: free-text search (by name) and a sort-by
-combobox (Name / Erstellt / Geändert) — same idiom as ToolPage's
-ToolFilterBar (tool_filter_bar.py), scoped to the fields Workpiece
-actually has (no magazine-only-style toggle here, nothing analogous
-exists for workpieces).
+ui/widgets/workpiece_filter_bar.py — WorkpieceBrowserPage's search bar,
+directly below its header: free-text search by name.
+
+No sort-by control here (unlike ToolPage's ToolFilterBar) — the browser's
+sort order is fixed by spec (groups before workpieces, alphabetical
+within each, see WorkpieceBrowserPage._refresh_list()/_BrowserListView),
+so a sort dropdown would just be a dead control that never changes
+anything.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QWidget
-
-SORT_OPTIONS: list[tuple[str, str]] = [
-    ("Name",      "name"),
-    ("Erstellt",  "created_at"),
-    ("Geändert",  "modified_at"),
-]
+from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
 
 class WorkpieceFilterBar(QWidget):
     search_changed = Signal(str)
-    sort_changed   = Signal(str)   # one of SORT_OPTIONS' key values
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -34,16 +29,5 @@ class WorkpieceFilterBar(QWidget):
         self._search.textChanged.connect(self.search_changed)
         root.addWidget(self._search, stretch=1)
 
-        self._sort_combo = QComboBox()
-        for label, key in SORT_OPTIONS:
-            self._sort_combo.addItem(label, userData=key)
-        self._sort_combo.currentIndexChanged.connect(
-            lambda i: self.sort_changed.emit(self._sort_combo.itemData(i))
-        )
-        root.addWidget(self._sort_combo)
-
     def search_text(self) -> str:
         return self._search.text().strip().lower()
-
-    def sort_key(self) -> str:
-        return self._sort_combo.currentData()

@@ -483,12 +483,17 @@ QFrame#Card[expanded="true"] {
     border: 1px solid rgba(80, 120, 200, 0.6);
 }
 
-/* ProgramDetailPage: a used tool's row (_ToolRow) toggles this "magazine"
-   property to a dezent (subtle) green whenever ToolDatabaseSignals says the
-   tool currently sits in a magazine pocket — see dark.qss for the same rule. */
-QFrame#Card[magazine="true"] {
-    background: rgba(74, 138, 24, 0.12);
-    border: 1px solid rgba(74, 138, 24, 0.5);
+/* ui/widgets/tool_usage_card.py's ToolUsageCard toggles this "variant" to
+   "in_magazine" whenever the tool currently sits in a magazine pocket —
+   the exact same colours as [variant="start"] above, reused deliberately.
+   See dark.qss for the full rationale. */
+QFrame#Card[variant="in_magazine"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #7AC230,
+        stop: 1 #4A8A18
+    );
 }
 
 /* WorkpieceDetailPage: an operation card whose G-code file is missing on

@@ -8,9 +8,14 @@ row<->dataclass mapping pair per table) — see that module for the
 established pattern this one follows.
 
 Two tables:
-    workpieces  — one row per physical part. folder_path (a direct
-                  subfolder of AppSettings.workpieces_root_path, see
-                  persistence/workpiece_sync.py) is the sync anchor.
+    workpieces  — one row per physical part. folder_path is a path
+                  RELATIVE to AppSettings.workpieces_root_path, using
+                  forward slashes regardless of OS (e.g.
+                  "ProjektA/FlanschTeil") — see persistence/workpiece_sync.py
+                  for the folder <-> DB sync this anchors, and
+                  ui/pages/workpiece_browser_page.py for why relative:
+                  portable if the root folder is ever moved, and the
+                  breadcrumb there is just folder_path.split("/").
     operations  — one row per G-code file *version* (colloquially a
                   "Programm" — see domain.models.Operation's docstring on
                   why the class keeps that name). A file that gets
@@ -23,11 +28,16 @@ Two tables:
                   describe the program currently loaded/running on the
                   MACHINE — an unrelated concept.
 
-This replaces an earlier version of this module that bound one Workpiece
-1:1 to a single gcode_path with no operations table and no versioning at
-all — that schema/data was intentionally discarded (not migrated) when
-this module was rewritten, per explicit confirmation; there is no
-migration path from the old workpieces.db.
+This replaces two earlier versions of this module, both intentionally
+discarded (not migrated) rather than converted, per explicit confirmation
+each time — see _SCHEMA_VERSION below for how that discard is detected
+and applied:
+    v0 -> v1: bound one Workpiece 1:1 to a single gcode_path, no
+              operations table, no versioning at all.
+    v1 -> v2: folder_path changed from an ABSOLUTE path (one flat level
+              under the root) to a RELATIVE path supporting an arbitrary-
+              depth folder hierarchy (groups vs. workpieces — see
+              persistence/workpiece_sync.py's module docstring).
 """
 from __future__ import annotations
 
@@ -98,6 +108,15 @@ CREATE TABLE IF NOT EXISTS operations (
 # non-digit), so no boundary assertion is needed after it.
 _T_ADDRESS_RE = re.compile(r"(?<![A-Za-z0-9])T(\d+)")
 
+# Bumped whenever a change to this module's tables would silently produce
+# wrong results if old data were kept as-is (see module docstring's
+# "v0 -> v1"/"v1 -> v2" history) — checked against the DB file's own
+# PRAGMA user_version in _migrate_schema(). A plain CREATE TABLE IF NOT
+# EXISTS is a no-op against an already-existing table, so without this,
+# an old DB would keep its old column set (v0->v1) or its old absolute-
+# path folder_path values (v1->v2) forever.
+_SCHEMA_VERSION = 2
+
 
 class WorkpieceDatabaseSignals(QObject):
     """Qt signal bridge for WorkpieceDatabase writes — kept separate from
@@ -147,34 +166,31 @@ class WorkpieceDatabase:
         self._migrate_schema()
 
     def _migrate_schema(self) -> None:
-        """Discard a pre-rewrite `workpieces` table (the old schema: one
-        row 1:1-bound to a single gcode_path, no folder_path/notes/
-        modified_at columns, no operations table at all).
+        """Discard (never convert) data from a schema version older than
+        _SCHEMA_VERSION — see that constant and the module docstring for
+        why each bump was a "confirmed discard", not a gap to fill in
+        later with a real column-by-column migration (unlike
+        tool_db.py's _migrate_schema(), which does convert old data).
 
-        `CREATE TABLE IF NOT EXISTS` above is a no-op against an existing
-        table, so an old workpieces.db left over from before this module
-        was rewritten would otherwise keep its old columns forever and
-        crash on the first read (missing e.g. `folder_path`/`notes`).
-        There is deliberately no column-by-column migration here (unlike
-        tool_db.py's _migrate_schema()) — this schema change was
-        confirmed, before it was made, to discard rather than convert old
-        data (no operations, no versioning existed yet to convert to), so
-        detecting the old shape and starting fresh is the correct fix,
-        not a gap to fill in later.
+        PRAGMA user_version is SQLite's own built-in integer version slot
+        for exactly this purpose — a plain CREATE TABLE IF NOT EXISTS
+        can't detect "the columns match, but their CONTENT'S meaning
+        changed" (v1 -> v2's folder_path: absolute -> relative), so
+        column introspection alone isn't enough here.
         """
-        existing_columns = {
-            row["name"] for row in self._conn.execute("PRAGMA table_info(workpieces)")
-        }
-        if existing_columns and "folder_path" not in existing_columns:
-            logger.warning(
-                "%s has the pre-rewrite workpieces schema (no folder_path "
-                "column) - dropping and recreating; see module docstring, "
-                "this data was never migrated on purpose.",
-                self._db_path,
-            )
+        current_version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if current_version < _SCHEMA_VERSION:
+            if current_version > 0:
+                logger.warning(
+                    "%s is at schema version %d, expected %d - dropping and "
+                    "recreating; see module docstring, this data was never "
+                    "migrated on purpose.",
+                    self._db_path, current_version, _SCHEMA_VERSION,
+                )
             self._conn.execute("DROP TABLE IF EXISTS operations")
             self._conn.execute("DROP TABLE IF EXISTS workpieces")
             self._conn.executescript(_SCHEMA)
+            self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self._conn.commit()
 
     @staticmethod
@@ -208,17 +224,36 @@ class WorkpieceDatabase:
         workpiece.operations = self.operations_for_workpiece(workpiece_id)
         return workpiece
 
-    def get_by_folder(self, folder_path: str) -> Workpiece | None:
+    def get_workpiece_by_folder(self, folder_path: str) -> Workpiece | None:
         row = self._conn.execute(
             "SELECT * FROM workpieces WHERE folder_path = ?", (folder_path,)
         ).fetchone()
         return _row_to_workpiece(row) if row is not None else None
 
+    def workpieces_under(self, folder_prefix: str) -> list[Workpiece]:
+        """All workpieces whose folder_path is *folder_prefix* itself or
+        nested under it (folder_prefix + "/" + anything) — used to check
+        whether a GROUP folder (see workpiece_sync.py's classification
+        rule) is empty of workpieces before allowing it to be deleted
+        (ui/pages/workpiece_browser_page.py)."""
+        prefix = folder_prefix.rstrip("/")
+        if not prefix:
+            return self.all_workpieces()
+        rows = self._conn.execute(
+            "SELECT * FROM workpieces WHERE folder_path = :prefix "
+            "OR folder_path LIKE :nested ESCAPE '\\' ORDER BY folder_path",
+            {
+                "prefix": prefix,
+                "nested": _escape_like(prefix) + "/%",
+            },
+        ).fetchall()
+        return [_row_to_workpiece(r) for r in rows]
+
     def all_workpieces(self) -> list[Workpiece]:
-        """Lightweight list for WorkpiecesPage — operations are NOT
-        populated here (would mean one extra query per row for a list
-        that only ever shows name/created/modified); fetch a single
-        Workpiece via get_workpiece() when its operations are needed."""
+        """Lightweight list for the workpiece browser — operations are
+        NOT populated here (would mean one extra query per row); fetch a
+        single Workpiece via get_workpiece() when its operations are
+        needed."""
         rows = self._conn.execute(
             "SELECT * FROM workpieces ORDER BY id"
         ).fetchall()
@@ -227,14 +262,15 @@ class WorkpieceDatabase:
     def get_or_create_by_folder(
         self, folder_path: str, default_name: str | None = None,
     ) -> Workpiece:
-        """Return the Workpiece already anchored to *folder_path*, or
-        create+persist a fresh one (name defaults to the folder's own
-        name) if none exists yet. Entry point for the folder sync (see
-        persistence.workpiece_sync) — one direct subfolder = one Workpiece."""
-        existing = self.get_by_folder(folder_path)
+        """Return the Workpiece already anchored to *folder_path* (a path
+        RELATIVE to AppSettings.workpieces_root_path — see module
+        docstring), or create+persist a fresh one (name defaults to the
+        folder's own last path segment) if none exists yet. Entry point
+        for the folder sync (see persistence.workpiece_sync)."""
+        existing = self.get_workpiece_by_folder(folder_path)
         if existing is not None:
             return existing
-        name = default_name or Path(folder_path).name
+        name = default_name or folder_path.rsplit("/", 1)[-1]
         return self.upsert_workpiece(Workpiece(name=name, folder_path=folder_path))
 
     def get_or_create_by_path(
@@ -245,18 +281,25 @@ class WorkpieceDatabase:
         completely unknown yet.
 
         This is DatumSimWidget.set_file()'s entry point — kept for that
-        caller, which loads an arbitrary file (not necessarily one that
-        lives under AppSettings.workpieces_root_path, e.g. the bundled
-        example G-code) and just needs "some Workpiece row" to hang its
-        per-workpiece collision-detection override off of. It is NOT the
-        Workpieces UI's own path — that flow always goes through the
-        folder sync (get_or_create_by_folder + create_new_version).
+        caller, which loads an arbitrary file and just needs "some
+        Workpiece row" to hang its per-workpiece collision-detection
+        override off of. It is NOT the Workpieces UI's own path — that
+        flow always goes through the folder sync (get_or_create_by_folder
+        + create_new_version).
 
         Resolution order: (1) an existing Operation row already points at
         this exact gcode_path -> return its Workpiece. (2) otherwise, the
-        file's parent folder is used as a folder-sync anchor
-        (get_or_create_by_folder) and a new first-version Operation is
-        created under it.
+        file's parent folder is used as a folder-sync anchor. If that
+        folder lies under AppSettings.workpieces_root_path, folder_path
+        is stored properly relative to it (POSIX slashes) so this
+        workpiece shows up in the folder browser like any other; if the
+        file lives entirely outside the configured root (e.g. no root
+        configured, or a path picked from anywhere on disk), folder_path
+        falls back to the absolute path as a last resort — such a
+        workpiece simply won't appear in the browser (it has nothing to
+        be "relative to"), which is fine: this fallback exists only for
+        DatumSimWidget's per-workpiece override lookup, not for the
+        browser's own bookkeeping.
         """
         row = self._conn.execute(
             "SELECT workpiece_id FROM operations WHERE gcode_path = ? LIMIT 1",
@@ -267,7 +310,7 @@ class WorkpieceDatabase:
             if workpiece is not None:
                 return workpiece
 
-        folder_path = str(Path(gcode_path).resolve().parent)
+        folder_path = _relative_or_absolute_folder(Path(gcode_path).resolve().parent)
         workpiece = self.get_or_create_by_folder(folder_path, default_name)
         self.create_first_version(
             workpiece.id, Path(gcode_path).stem, gcode_path, _sha256_file(gcode_path),
@@ -338,7 +381,7 @@ class WorkpieceDatabase:
             params,
         )
         self._conn.commit()
-        new_id = cur.lastrowid or self.get_by_folder(workpiece.folder_path).id
+        new_id = cur.lastrowid or self.get_workpiece_by_folder(workpiece.folder_path).id
         WorkpieceDatabaseSignals.instance().workpiece_changed.emit(new_id)
         return self.get_workpiece(new_id)
 
@@ -554,6 +597,30 @@ class WorkpieceDatabase:
 
 
 # ── Shared helpers (also used by persistence/workpiece_sync.py) ────────────
+
+def _escape_like(text: str) -> str:
+    """Escape SQL LIKE wildcards (% and _) in *text* using backslash, for
+    use with an explicit ESCAPE '\\' clause — folder names containing a
+    literal % or _ must not be treated as LIKE wildcards in
+    workpieces_under()."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _relative_or_absolute_folder(absolute_folder: Path) -> str:
+    """*absolute_folder* expressed relative to AppSettings.workpieces_root_path
+    (POSIX slashes, so it matches folder_path's convention — see module
+    docstring) if it lies under that root, else the absolute path
+    unchanged as a last-resort fallback (see get_or_create_by_path())."""
+    from controller.sim.core.settings import AppSettings
+
+    root = AppSettings.instance().workpieces_root_path
+    if root:
+        try:
+            return absolute_folder.relative_to(Path(root)).as_posix()
+        except ValueError:
+            pass
+    return str(absolute_folder)
+
 
 def _sha256_file(path: str) -> str:
     """SHA-256 hex digest of a file's content, or "" if it can't be read

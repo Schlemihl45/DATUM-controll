@@ -1,19 +1,33 @@
 """
-ui/widgets/collapsible_section.py — CollapsibleSection: a titled section
-with a QToolButton arrow that shows/hides its body.
+ui/widgets/collapsible_section.py — CollapsibleSection: a generic titled
+section with a QToolButton chevron that shows/hides its body.
 
 The accordion pattern ToolPage's ToolCardWidget popularized (see that
 module's docstring, "ToolPage: Accordion, Scroll-vs-Klick") for its
-inline-expanding tool cards, reused here for a different purpose: a
-collapsed-by-default sub-section on a detail page (a G-code preview, a
-version history list, a used-tools list) rather than a whole list row.
-Unlike ToolCardWidget's accordion, sections here are independent — opening
-one never closes another.
+inline-expanding tool cards is fixed/hard-wired into that one widget —
+this is the first GENERIC, reusable extraction of the same idea, for a
+different purpose: a collapsed-by-default sub-section on a detail page (a
+G-code preview, a version history list) rather than a whole list row.
+Unlike ToolCardWidget's accordion, sections here are independent —
+opening one never closes another.
+
+The body is an internally-scrollable QScrollArea (no visible scrollbar;
+touch-scroll via QScroller — same idiom as tool_list_card.py's
+ToolListView, just with the vertical policy ALSO turned off, since that
+one only disables the horizontal bar). Callers add their content to
+`section.body_layout`, not to `section.body` directly. Call
+set_max_body_height() so an expanded section's content scrolls internally
+past that height instead of growing the section (and everything below it
+in the parent layout) without bound — see ui/pages/program_detail_page.py,
+whose whole-page layout is fixed and relies on this.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QScrollArea, QScroller, QToolButton,
+    QVBoxLayout, QWidget,
+)
 
 
 class _HeaderRow(QWidget):
@@ -33,8 +47,9 @@ class _HeaderRow(QWidget):
 
 
 class CollapsibleSection(QWidget):
-    """Caller fills `.body`'s layout with whatever content the section
-    should show once expanded; the header (arrow + title) is built here."""
+    """Caller fills `.body_layout` with whatever content the section
+    should show once expanded; the header (arrow + title) and the
+    internally-scrollable body container are built here."""
 
     expanded_changed = Signal(bool)
 
@@ -64,9 +79,25 @@ class CollapsibleSection(QWidget):
         header_row.addStretch(1)
         outer.addWidget(header)
 
-        self.body = QWidget(self)
+        self.body = QScrollArea(self)
+        self.body.setWidgetResizable(True)
+        self.body.setFrameShape(QFrame.Shape.NoFrame)
+        self.body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        QScroller.grabGesture(self.body.viewport(), QScroller.ScrollerGestureType.TouchGesture)
+
+        body_content = QWidget()
+        self.body_layout = QVBoxLayout(body_content)
+        self.body_layout.setContentsMargins(0, 4, 0, 0)
+        self.body.setWidget(body_content)
+
         self.body.setVisible(False)
         outer.addWidget(self.body)
+
+    def set_max_body_height(self, height: int) -> None:
+        """Cap the expanded body's height — content beyond it scrolls
+        internally instead of growing this section further."""
+        self.body.setMaximumHeight(height)
 
     def set_expanded(self, expanded: bool) -> None:
         if expanded == self._expanded:

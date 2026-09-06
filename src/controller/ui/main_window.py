@@ -32,7 +32,7 @@ from controller.ui.icon_loader import get_icon
 from controller.ui.pages.machine_page import MachinePage
 from controller.ui.pages.settings_page import SettingsPage
 from controller.ui.pages.tool_page import ToolPage
-from controller.ui.pages.workpieces_page import WorkpiecesSection
+from controller.ui.pages.workpiece_browser_page import WorkpiecesSection
 from controller.ui.widgets.card_button import CardButton
 from controller.ui.widgets.machine_info_cards import (
     AxisPositionCard,
