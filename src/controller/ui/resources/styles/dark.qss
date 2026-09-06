@@ -486,14 +486,20 @@ QFrame#Card[expanded="true"] {
     border: 1px solid rgba(120, 155, 230, 0.55);
 }
 
-/* ProgramDetailPage: a used tool's row (_ToolRow) toggles this "magazine"
-   property to a dezent (subtle) green whenever ToolDatabaseSignals says the
-   tool currently sits in a magazine pocket — kept separate from the
-   [expanded] accent above, an unrelated concept (open/closed vs. in the
-   magazine or not). */
-QFrame#Card[magazine="true"] {
-    background: rgba(99, 153, 34, 0.14);
-    border: 1px solid rgba(99, 153, 34, 0.45);
+/* ui/widgets/tool_usage_card.py's ToolUsageCard (shared by
+   WorkpieceDetailPage's aggregated tool list and ProgramDetailPage's own)
+   toggles this "variant" to "in_magazine" whenever ToolDatabaseSignals
+   says the tool currently sits in a magazine pocket. Deliberately the
+   EXACT same colours as [variant="start"] below (not a new green) — same
+   meaning reused on purpose. Absence of this variant is the card's
+   NORMAL look, not a warning state — no separate "not in magazine" colour. */
+QFrame#Card[variant="in_magazine"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 #639922,
+        stop: 1 #27500A
+    );
 }
 
 /* WorkpieceDetailPage: an operation card whose G-code file is missing on
@@ -529,7 +535,7 @@ QLabel#ToolCardButtonLabel {
     font-weight: bold;
 }
 
-/* Workpiece/Operation/History cards (ui/pages/workpieces_page.py,
+/* Workpiece/Operation/History cards (ui/pages/workpiece_browser_page.py,
    workpiece_detail_page.py, program_detail_page.py): the NAME is the
    primary, most prominent line — big and bold — while dates/other info
    sit below it, small and NOT bold. Deliberately their own pair of

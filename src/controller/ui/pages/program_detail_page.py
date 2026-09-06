@@ -1,14 +1,19 @@
 """
 ui/pages/program_detail_page.py — ProgramDetailPage: one Operation
 version — sim playback of its G-code, notes, used tools (checked live
-against the magazine), an always-expanded G-code preview and a collapsed
+against the magazine), a collapsed G-code section and a collapsed
 version history.
 
-Reached from WorkpieceDetailPage (clicking an operation card) or from
-another ProgramDetailPage's own history list (clicking an old version) —
-pushed onto the shared `nav` PageStack (see ui/widgets/page_stack.py)
-either way, so the app-wide Return button pops back to whichever page
-opened this one instead of jumping to Home.
+Layout principle: the PAGE ITSELF is NOT scrollable (no outer QScrollArea
+wrapping everything) — sim view, G-code section, tool list and history
+sit in fixed positions in one QVBoxLayout. Variable content amount is
+absorbed by SECTIONS scrolling internally (ui/widgets/collapsible_section.py's
+CollapsibleSection caps its expanded body at a max height and scrolls past
+that; the always-visible tool list gets its own small fixed-height
+internally-scrollable area), never by the page growing. A side effect of
+this design: with no page-level QScrollArea competing for mouse-drag/wheel
+input, the sim widget's own camera controls (mouse-drag rotate/pan,
+wheel-zoom — see sim/ui/viewport.py) have nothing left to conflict with.
 
 Colloquially "Programm" (see domain.models.Operation's docstring) — kept
 as Operation in code to avoid colliding with ProgramState/ProgramInfoCard,
@@ -16,18 +21,22 @@ which describe the program currently loaded/running on the MACHINE, an
 unrelated concept. The sim widget below is loaded with THIS OPERATION
 VERSION's own gcode_path, never with whatever the real machine currently
 has loaded.
+
+Reached from WorkpieceDetailPage (clicking an operation card) or from
+another ProgramDetailPage's own history list (clicking an old version) —
+pushed onto the shared `nav` PageStack (see ui/widgets/page_stack.py)
+either way, so the app-wide Return button pops back to whichever page
+opened this one instead of jumping to Home.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea,
+    QScroller, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
-from controller.sim.simulation.tool_definition import ToolType
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card import Card
 from controller.ui.widgets.collapsible_section import CollapsibleSection
@@ -35,7 +44,7 @@ from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.gcode_highlighter import GCodeHighlighter
 from controller.ui.widgets.gcode_viewer import GCodeViewer
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
-from controller.ui.widgets.tool_icons import tool_type_icon
+from controller.ui.widgets.tool_usage_card import ToolUsageCard
 
 # Same fallback MachinePage uses: the real 3D sim widget if moderngl/numpy
 # are available, a text placeholder otherwise (see sim_placeholder.py).
@@ -45,6 +54,15 @@ except ImportError:
     from controller.ui.widgets.sim_placeholder import SimPlaceholder as _SimWidget  # type: ignore[assignment]
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
+
+# Section body caps — see module docstring on why sections scroll
+# internally instead of the page growing. Kept modest since this page has
+# no scroll fallback of its own: expanding G-code AND history at once
+# could still push total content past the window's available height (a
+# known, accepted trade-off of "never scroll the page itself").
+_GCODE_SECTION_HEIGHT = 240
+_HISTORY_SECTION_HEIGHT = 220
+_TOOLS_SECTION_HEIGHT = 160
 
 
 class _AutoSaveTextEdit(QPlainTextEdit):
@@ -57,69 +75,6 @@ class _AutoSaveTextEdit(QPlainTextEdit):
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         self.focus_out.emit()
-
-
-class _ToolRow(Card):
-    """One pocket referenced by a T-address in this operation's G-code,
-    styled like ToolCardWidget's collapsed header (type icon + pocket
-    badge + name — see tool_card_widget.py) but flat: no expansion, and a
-    live "im Magazin" checkbox instead of the settings button.
-
-    A T-address in G-code selects a MAGAZINE POCKET, not a persistent
-    ToolDefinition.tool_number identity (see gcode/compiler.py's
-    ToolChange.pocket_number docstring, and MachinePage's own
-    validate_tools(..., get_tool_by_pocket) which already relies on this)
-    — so the numbers parsed into Operation.tools are pocket numbers, and
-    this resolves them via ToolDatabase.get_tool_by_pocket(), never
-    get_tool()."""
-
-    def __init__(self, pocket: int, parent: QWidget | None = None) -> None:
-        super().__init__(title=None, parent=parent)
-        self._pocket = pocket
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-        row = QHBoxLayout()
-        row.setSpacing(10)
-
-        self._type_icon_lbl = QLabel()
-        self._type_icon_lbl.setFixedSize(40, 40)
-        row.addWidget(self._type_icon_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self._pocket_badge = QLabel()
-        self._pocket_badge.setObjectName("PocketBadge")
-        self._pocket_badge.setFixedSize(30, 22)
-        self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._pocket_badge.setText(str(pocket))
-        row.addWidget(self._pocket_badge, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self._name_lbl = ElidedLabel()
-        self._name_lbl.setObjectName("ToolCardButtonLabel")
-        row.addWidget(self._name_lbl, stretch=1)
-
-        self._magazine_chk = QCheckBox("im Magazin")
-        self._magazine_chk.setEnabled(False)
-        row.addWidget(self._magazine_chk, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        self.content_layout.addLayout(row)
-        self.refresh()
-
-    def refresh(self) -> None:
-        tool = ToolDatabase.instance().get_tool_by_pocket(self._pocket)
-        occupied = tool is not None
-
-        tool_type = tool.tool_type if tool is not None else ToolType.ENDMILL
-        icon_size = QSize(40, 40)
-        self._type_icon_lbl.setPixmap(tool_type_icon(tool_type, size=40).pixmap(icon_size))
-
-        if tool is not None:
-            self._name_lbl.set_full_text(tool.name or tool.remark or f"Pocket {self._pocket}")
-        else:
-            self._name_lbl.set_full_text(f"Pocket {self._pocket} — leer")
-
-        self._magazine_chk.setChecked(occupied)
-        self.setProperty("magazine", occupied)
-        self.style().unpolish(self)
-        self.style().polish(self)
 
 
 class _HistoryRow(Card):
@@ -164,50 +119,15 @@ class _HistoryRow(Card):
         super().mousePressEvent(event)
 
 
-class _PageScrollArea(QScrollArea):
-    """This page's own outer scroll area.
-
-    Deliberately does NOT grab a QScroller touch gesture (unlike most
-    scrollable lists elsewhere in the app, e.g. tool_list_card.py's
-    ToolListView): a gesture grabbed on the whole viewport competes with
-    the sim widget's own mouse-drag camera controls
-    (Viewport.mousePressEvent/mouseMoveEvent in sim/ui/viewport.py) and
-    can hijack a camera-rotate/pan drag into a page-scroll instead — this
-    is what caused "moving the camera also scrolls the page". Plain
-    wheel/scrollbar scrolling still works fine without QScroller.
-
-    Also blocks wheel events entirely whenever the cursor is over one of
-    the registered no-scroll widgets (the sim widget, the G-code viewer):
-    QAbstractScrollArea's own wheelEvent() forwards an unconsumed wheel
-    event to ITS parent once its own content can't scroll further (e.g.
-    the G-code preview scrolled to its last line, or the sim widget's own
-    wheel-zoom) — which would otherwise scroll this page too.
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._no_scroll_widgets: list[QWidget] = []
-
-    def add_no_scroll_widget(self, widget: QWidget) -> None:
-        self._no_scroll_widgets.append(widget)
-
-    def wheelEvent(self, event) -> None:
-        pos = event.globalPosition().toPoint()
-        for widget in self._no_scroll_widgets:
-            if widget.isVisible() and widget.rect().contains(widget.mapFromGlobal(pos)):
-                event.accept()
-                return
-        super().wheelEvent(event)
-
-
 class ProgramDetailPage(QWidget):
     """See module docstring. `nav` is anything exposing push(widget, title)
     AND request_load_in_machine(gcode_path) (see
-    ui.pages.workpieces_page.WorkpiecesSection) — threaded through so this
-    page can push a new ProgramDetailPage for an old version onto the very
-    same navigation stack the caller used to reach this one, and so the
-    "In Maschine laden" button can reach all the way up to main_window.py
-    without this page knowing anything about MainWindow itself."""
+    ui.pages.workpiece_browser_page.WorkpiecesSection) — threaded through
+    so this page can push a new ProgramDetailPage for an old version onto
+    the very same navigation stack the caller used to reach this one, and
+    so the "In Maschine laden" button can reach all the way up to
+    main_window.py without this page knowing anything about MainWindow
+    itself."""
 
     def __init__(self, operation_id: int, nav, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -217,28 +137,17 @@ class ProgramDetailPage(QWidget):
         self._operation = self._db.get_operation(operation_id)
         self._loading = False
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        scroll = _PageScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        outer.addWidget(scroll)
-
-        content = QWidget()
-        col = QVBoxLayout(content)
-        col.setContentsMargins(12, 12, 12, 12)
-        col.setSpacing(12)
-        scroll.setWidget(content)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
 
         # ── Deprecated banner (old version only) ────────────────────────────
         self._banner = QLabel("⚠ Veraltete Version — nicht die aktuelle Version dieses Programms")
         self._banner.setObjectName("DeprecatedBanner")
         self._banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(self._banner)
+        root.addWidget(self._banner)
 
-        # ── Header: name, dates, notes ───────────────────────────────────────
+        # ── Header: name, dates, notes (fixed height) ────────────────────────
         header = Card(title=None)
         header_row = QHBoxLayout()
         header_row.setSpacing(12)
@@ -256,47 +165,62 @@ class ProgramDetailPage(QWidget):
 
         header.content_layout.addWidget(QLabel("Notizen"))
         self._notes_edit = _AutoSaveTextEdit()
-        self._notes_edit.setFixedHeight(70)
+        self._notes_edit.setFixedHeight(60)
         self._notes_edit.focus_out.connect(self._auto_save_notes)
         header.content_layout.addWidget(self._notes_edit)
-        col.addWidget(header)
+        root.addWidget(header)
 
-        # ── Sim playback ─────────────────────────────────────────────────────
+        # ── Sim playback: biggest/flexible share of the page ─────────────────
         self._sim = _SimWidget()
-        self._sim.setMinimumHeight(320)
+        self._sim.setMinimumHeight(200)
         try:
             self._sim.set_mode("SIM")
         except AttributeError:
             pass
-        col.addWidget(self._sim)
-        scroll.add_no_scroll_widget(self._sim)
+        root.addWidget(self._sim, stretch=1)
 
-        # ── G-code preview (always expanded — no collapse option) ────────────
-        col.addWidget(QLabel("G-Code"))
+        # ── G-code section: collapsed by default, capped + internally
+        # scrollable when expanded (see CollapsibleSection) ──────────────────
+        self._gcode_section = CollapsibleSection("G-Code")
+        self._gcode_section.set_max_body_height(_GCODE_SECTION_HEIGHT)
         self._gcode_view = GCodeViewer()
-        self._gcode_view.setMinimumHeight(240)
+        # Sized to fit the section's own cap exactly: GCodeViewer's own
+        # QPlainTextEdit already scrolls internally once its text overflows
+        # this height, so CollapsibleSection's wrapping QScrollArea never
+        # actually needs to scroll itself — avoids stacking two scroll
+        # mechanisms for the same content.
+        self._gcode_view.setFixedHeight(_GCODE_SECTION_HEIGHT - 20)
         self._gcode_highlighter = GCodeHighlighter(self._gcode_view.text_edit.document())
-        col.addWidget(self._gcode_view)
-        scroll.add_no_scroll_widget(self._gcode_view)
+        self._gcode_section.body_layout.addWidget(self._gcode_view)
+        root.addWidget(self._gcode_section)
 
-        # ── Used tools (flat list, magazine checkbox) ───────────────────────
-        col.addWidget(QLabel("Verwendete Werkzeuge"))
-        self._tools_col = QVBoxLayout()
-        self._tools_col.setSpacing(6)
-        self._tool_rows: dict[int, _ToolRow] = {}
-        col.addLayout(self._tools_col)
+        # ── Used tools: ALWAYS visible, fixed section height, internally
+        # scrollable (never collapsible — see module docstring) ─────────────
+        root.addWidget(QLabel("Verwendete Werkzeuge"))
+        self._tools_scroll = QScrollArea()
+        self._tools_scroll.setWidgetResizable(True)
+        self._tools_scroll.setFixedHeight(_TOOLS_SECTION_HEIGHT)
+        self._tools_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._tools_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._tools_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        QScroller.grabGesture(
+            self._tools_scroll.viewport(), QScroller.ScrollerGestureType.TouchGesture
+        )
+        tools_content = QWidget()
+        self._tools_layout = QVBoxLayout(tools_content)
+        self._tools_layout.setContentsMargins(0, 0, 0, 0)
+        self._tools_layout.setSpacing(6)
+        self._tools_scroll.setWidget(tools_content)
+        root.addWidget(self._tools_scroll)
+        self._tool_cards: dict[int, ToolUsageCard] = {}
 
         # ── Collapsed version history ────────────────────────────────────────
         self._history_section = CollapsibleSection("Verlauf")
-        history_layout = QVBoxLayout(self._history_section.body)
-        history_layout.setContentsMargins(0, 4, 0, 0)
-        history_layout.setSpacing(6)
-        self._history_layout = history_layout
-        col.addWidget(self._history_section)
+        self._history_section.set_max_body_height(_HISTORY_SECTION_HEIGHT)
+        self._history_section.body_layout.setSpacing(6)
+        root.addWidget(self._history_section)
 
-        col.addStretch(1)
-
-        # ── Load into MachinePage (bottom-right) ─────────────────────────────
+        # ── Load into MachinePage (bottom-right, fixed) ──────────────────────
         self._load_btn = QPushButton(" In Maschine laden")
         self._load_btn.setIcon(get_icon("machine", tint=True))
         self._load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -305,9 +229,8 @@ class ProgramDetailPage(QWidget):
         load_row = QHBoxLayout()
         load_row.addStretch(1)
         load_row.addWidget(self._load_btn)
-        col.addLayout(load_row)
+        root.addLayout(load_row)
 
-        ToolDatabaseSignals.instance().tool_changed.connect(self._on_tool_changed)
         WorkpieceDatabaseSignals.instance().operation_changed.connect(self._on_operation_changed)
 
         self._reload()
@@ -348,37 +271,41 @@ class ProgramDetailPage(QWidget):
             except Exception:
                 pass  # sim widget best-effort — a broken/missing file must not crash this page
 
-        self._rebuild_tool_rows(op.tools)
+        self._rebuild_tool_cards(op.tools)
         self._rebuild_history(op.lineage_id)
 
-    def _rebuild_tool_rows(self, pockets: list[int]) -> None:
+    def _rebuild_tool_cards(self, pockets: list[int]) -> None:
         """*pockets* are the raw numbers parsed from this operation's
         T-addresses — pocket numbers, not tool_number identities (see
-        _ToolRow's docstring)."""
+        ui.widgets.tool_usage_card.ToolUsageCard's docstring)."""
         wanted = set(pockets)
-        for pocket in list(self._tool_rows.keys()):
+        for pocket in list(self._tool_cards.keys()):
             if pocket not in wanted:
-                row = self._tool_rows.pop(pocket)
-                self._tools_col.removeWidget(row)
-                row.deleteLater()
-        for pocket in pockets:
-            if pocket not in self._tool_rows:
-                row = _ToolRow(pocket)
-                self._tool_rows[pocket] = row
-                self._tools_col.addWidget(row)
+                card = self._tool_cards.pop(pocket)
+                self._tools_layout.removeWidget(card)
+                card.deleteLater()
+        for position, pocket in enumerate(pockets):
+            card = self._tool_cards.get(pocket)
+            if card is None:
+                card = ToolUsageCard(pocket)
+                self._tool_cards[pocket] = card
+            if self._tools_layout.indexOf(card) != position:
+                self._tools_layout.removeWidget(card)
+                self._tools_layout.insertWidget(position, card)
             else:
-                self._tool_rows[pocket].refresh()
+                card.refresh()
 
     def _rebuild_history(self, lineage_id: int) -> None:
-        while self._history_layout.count():
-            item = self._history_layout.takeAt(0)
+        layout = self._history_section.body_layout
+        while layout.count():
+            item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         history = self._db.operation_history(lineage_id)
         if not history:
             empty = QLabel("Keine älteren Versionen.")
-            empty.setObjectName("ToolCardButtonLabel")
-            self._history_layout.addWidget(empty)
+            empty.setObjectName("WorkpieceCardInfo")
+            layout.addWidget(empty)
             return
         for old_operation in history:
             row = _HistoryRow(old_operation)
@@ -388,13 +315,9 @@ class ProgramDetailPage(QWidget):
                     f"{old_operation.name} (v{old_operation.version})",
                 )
             )
-            self._history_layout.addWidget(row)
+            layout.addWidget(row)
 
     # ── Signals ──────────────────────────────────────────────────────────────
-
-    def _on_tool_changed(self, _tool_number: int) -> None:
-        for row in self._tool_rows.values():
-            row.refresh()
 
     def _on_operation_changed(self, operation_id: int) -> None:
         if self._operation is not None and operation_id == self._operation.id:
@@ -409,8 +332,9 @@ class ProgramDetailPage(QWidget):
     def _on_load_in_machine_clicked(self) -> None:
         """Load this operation version's G-code into MachinePage and
         switch the app over to it — see WorkpiecesSection.request_load_in_machine()
-        (ui.pages.workpieces_page), which `nav` (the same object threaded
-        through this whole page hierarchy) forwards up to main_window.py."""
+        (ui.pages.workpiece_browser_page), which `nav` (the same object
+        threaded through this whole page hierarchy) forwards up to
+        main_window.py."""
         if self._operation is None or self._operation.file_missing:
             return
         self._nav.request_load_in_machine(self._operation.gcode_path)

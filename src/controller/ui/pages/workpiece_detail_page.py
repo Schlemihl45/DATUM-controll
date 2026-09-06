@@ -2,12 +2,17 @@
 ui/pages/workpiece_detail_page.py — WorkpieceDetailPage: one Workpiece's
 header (name, dates, estimated total time, notes), its current operations
 ("Programme" in UI text — see domain.models.Operation's docstring) as a
-non-scrolling list of cards, and a collapsed list of every tool used
-across them, checked against ToolDatabase.
+non-scrolling list of cards, and an accordion with every tool used across
+them (ui/widgets/tool_usage_card.py's ToolUsageCard, shared with
+ProgramDetailPage — see that widget's module docstring).
 
-Reached from WorkpiecesPage (clicking a workpiece card) — pushed onto the
-shared `nav` PageStack (see ui/widgets/page_stack.py). Clicking an
-operation card pushes ProgramDetailPage the same way.
+The PAGE ITSELF is scrollable (unlike ProgramDetailPage, which has a fixed
+layout because of its simulation view) — there's no simulation here
+claiming a fixed height, so growing with content is fine.
+
+Reached from WorkpieceBrowserPage (clicking a workpiece card) — pushed
+onto the shared `nav` PageStack (see ui/widgets/page_stack.py). Clicking
+an operation card pushes ProgramDetailPage the same way.
 """
 from __future__ import annotations
 
@@ -21,20 +26,22 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from controller.persistence.tool_db import ToolDatabase, ToolDatabaseSignals
+from controller.persistence.gcode_files import GCODE_EXTENSIONS, is_gcode_file
 from controller.persistence.workpiece_db import WorkpieceDatabase, WorkpieceDatabaseSignals
-from controller.persistence.workpiece_sync import GCODE_EXTENSIONS, sync_single_workpiece
+from controller.persistence.workpiece_sync import absolute_folder_for, has_unexpected_subfolders, sync_single_workpiece
 from controller.sim.core.settings import AppSettings
 from controller.ui.icon_loader import get_icon
 from controller.ui.pages.program_detail_page import ProgramDetailPage
 from controller.ui.widgets.card import Card
 from controller.ui.widgets.card_button import CardButton
-from controller.ui.widgets.collapsible_section import CollapsibleSection
 from controller.ui.widgets.elided_label import ElidedLabel
 from controller.ui.widgets.preview_thumbnail import PreviewThumbnail
+from controller.ui.widgets.tool_usage_card import ToolUsageCard
 
 _DATE_FMT = "%d.%m.%Y %H:%M"
-_GCODE_FILE_FILTER = "G-Code-Dateien (*.ngc *.nc *.cnc);;Alle Dateien (*)"
+_GCODE_FILE_FILTER = (
+    f"G-Code-Dateien (*{' *'.join(GCODE_EXTENSIONS)});;Alle Dateien (*)"
+)
 
 
 class _AutoSaveTextEdit(QPlainTextEdit):
@@ -46,6 +53,49 @@ class _AutoSaveTextEdit(QPlainTextEdit):
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         self.focus_out.emit()
+
+
+class _SimpleAccordion(QWidget):
+    """A minimal expand/collapse section: header (chevron + title) + a
+    plain body QWidget, shown/hidden on click — no max-height, no
+    internal scrolling. Deliberately NOT ui/widgets/collapsible_section.py's
+    CollapsibleSection: this page already scrolls as a whole (no fixed
+    layout to protect), so there's nothing to cap here — see this page's
+    own module docstring."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._expanded = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        self._arrow_btn = QToolButton()
+        self._arrow_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self._arrow_btn.setAutoRaise(True)
+        self._arrow_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._arrow_btn.clicked.connect(lambda: self.set_expanded(not self._expanded))
+
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("CardTitle")
+
+        header = QHBoxLayout()
+        header.addWidget(self._arrow_btn)
+        header.addWidget(title_lbl)
+        header.addStretch(1)
+        outer.addLayout(header)
+
+        self.body = QWidget()
+        self.body.setVisible(False)
+        outer.addWidget(self.body)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = expanded
+        self._arrow_btn.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self.body.setVisible(expanded)
 
 
 class _OperationCard(Card):
@@ -159,49 +209,9 @@ class _LoadProgramCard(CardButton):
         self.setMinimumHeight(64)
 
 
-class _UsedToolRow(QWidget):
-    """One row in the collapsed "used tools" section — a pocket badge
-    (same PocketBadge style ToolPage uses) + name + magazine status.
-
-    *pocket* is the raw number parsed from a T-address, which selects a
-    MAGAZINE POCKET, not a persistent ToolDefinition.tool_number identity
-    (see gcode/compiler.py's ToolChange.pocket_number docstring and
-    program_detail_page.py's _ToolRow, which resolves the same way) — so
-    this looks tools up via ToolDatabase.get_tool_by_pocket(), not
-    get_tool()."""
-
-    def __init__(self, pocket: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._pocket = pocket
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-
-        self._pocket_badge = QLabel()
-        self._pocket_badge.setObjectName("PocketBadge")
-        self._pocket_badge.setFixedSize(30, 22)
-        self._pocket_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._pocket_badge.setText(str(pocket))
-        row.addWidget(self._pocket_badge)
-
-        self._label = QLabel()
-        self._label.setObjectName("ToolCardButtonLabel")
-        row.addWidget(self._label, stretch=1)
-        self.refresh()
-
-    def refresh(self) -> None:
-        tool = ToolDatabase.instance().get_tool_by_pocket(self._pocket)
-        if tool is None:
-            self._label.setText(f"Pocket {self._pocket} — leer")
-            return
-        name = tool.name or tool.remark or f"Pocket {self._pocket}"
-        self._label.setText(f"Pocket {self._pocket} — {name} (im Magazin)")
-
-
 class WorkpieceDetailPage(QWidget):
     """See module docstring. `nav` is anything exposing push(widget, title)
-    (see ui.pages.workpieces_page.WorkpiecesSection)."""
+    (see ui.pages.workpiece_browser_page.WorkpiecesSection)."""
 
     def __init__(self, workpiece_id: int, nav, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -225,6 +235,15 @@ class WorkpieceDetailPage(QWidget):
         col.setContentsMargins(12, 12, 12, 12)
         col.setSpacing(12)
         scroll.setWidget(content)
+
+        # ── Subfolder-ambiguity warning (Schritt 4's special case) ──────────
+        self._subfolder_warning = QLabel(
+            "⚠ Dieser Werkstück-Ordner enthält Unterordner, die ignoriert werden."
+        )
+        self._subfolder_warning.setObjectName("DeprecatedBanner")
+        self._subfolder_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._subfolder_warning.setVisible(False)
+        col.addWidget(self._subfolder_warning)
 
         # ── Header ───────────────────────────────────────────────────────────
         header = Card(title=None)
@@ -263,20 +282,19 @@ class WorkpieceDetailPage(QWidget):
         self._operation_cards: dict[int, _OperationCard] = {}
         col.addLayout(self._operations_col)
 
-        # ── Collapsed used-tools section ─────────────────────────────────────
-        self._tools_section = CollapsibleSection("Verwendete Werkzeuge")
-        tools_layout = QVBoxLayout(self._tools_section.body)
-        tools_layout.setContentsMargins(0, 4, 0, 0)
-        tools_layout.setSpacing(4)
-        self._tools_layout = tools_layout
-        self._tool_rows: dict[int, _UsedToolRow] = {}
+        # ── Used-tools accordion (simple — no max-height/internal scroll,
+        # this whole page scrolls already, see _SimpleAccordion) ────────────
+        self._tools_section = _SimpleAccordion("Verwendete Werkzeuge")
+        self._tools_layout = QVBoxLayout(self._tools_section.body)
+        self._tools_layout.setContentsMargins(0, 4, 0, 0)
+        self._tools_layout.setSpacing(6)
+        self._tool_cards: dict[int, ToolUsageCard] = {}
         col.addWidget(self._tools_section)
 
         col.addStretch(1)
 
         WorkpieceDatabaseSignals.instance().workpiece_changed.connect(self._on_workpiece_changed)
         WorkpieceDatabaseSignals.instance().operation_changed.connect(self._on_operation_changed)
-        ToolDatabaseSignals.instance().tool_changed.connect(self._on_tool_changed)
 
         self._reload()
 
@@ -297,6 +315,7 @@ class WorkpieceDetailPage(QWidget):
             f"Geschätzte Gesamtzeit: {_format_hms(workpiece.estimated_total_time)}"
         )
         self._thumb.set_material_hint(workpiece.material)
+        self._subfolder_warning.setVisible(has_unexpected_subfolders(workpiece))
 
         self._loading = True
         if not self._notes_edit.hasFocus():
@@ -305,12 +324,12 @@ class WorkpieceDetailPage(QWidget):
 
         self._rebuild_operations(workpiece.operations)
 
-        used_tools: list[int] = []
+        pockets: list[int] = []
         for op in workpiece.operations:
-            for t in op.tools:
-                if t not in used_tools:
-                    used_tools.append(t)
-        self._rebuild_used_tools(used_tools)
+            for pocket in op.tools:
+                if pocket not in pockets:
+                    pockets.append(pocket)
+        self._rebuild_used_tools(pockets)
 
     def _rebuild_operations(self, operations) -> None:
         wanted = {op.id: op for op in operations}
@@ -336,20 +355,23 @@ class WorkpieceDetailPage(QWidget):
                 self._operations_col.removeWidget(card)
                 self._operations_col.insertWidget(target_index, card)
 
-    def _rebuild_used_tools(self, tool_numbers: list[int]) -> None:
-        wanted = set(tool_numbers)
-        for number in list(self._tool_rows.keys()):
-            if number not in wanted:
-                row = self._tool_rows.pop(number)
-                self._tools_layout.removeWidget(row)
-                row.deleteLater()
-        for number in tool_numbers:
-            if number not in self._tool_rows:
-                row = _UsedToolRow(number)
-                self._tool_rows[number] = row
-                self._tools_layout.addWidget(row)
+    def _rebuild_used_tools(self, pockets: list[int]) -> None:
+        wanted = set(pockets)
+        for pocket in list(self._tool_cards.keys()):
+            if pocket not in wanted:
+                card = self._tool_cards.pop(pocket)
+                self._tools_layout.removeWidget(card)
+                card.deleteLater()
+        for position, pocket in enumerate(pockets):
+            card = self._tool_cards.get(pocket)
+            if card is None:
+                card = ToolUsageCard(pocket)
+                self._tool_cards[pocket] = card
+            if self._tools_layout.indexOf(card) != position:
+                self._tools_layout.removeWidget(card)
+                self._tools_layout.insertWidget(position, card)
             else:
-                self._tool_rows[number].refresh()
+                card.refresh()
 
     # ── Interaction ──────────────────────────────────────────────────────────
 
@@ -364,7 +386,10 @@ class WorkpieceDetailPage(QWidget):
         turns into a new Operation (or a new VERSION of an existing one,
         if its filename already exists there — see _LoadProgramCard's
         docstring)."""
-        start_dir = AppSettings.instance().workpieces_explorer_root_path or self._workpiece.folder_path
+        start_dir = AppSettings.instance().workpieces_explorer_root_path
+        if not start_dir:
+            dest_folder = absolute_folder_for(self._workpiece)
+            start_dir = str(dest_folder) if dest_folder else ""
         path, _ = QFileDialog.getOpenFileName(
             self, "Programm laden", start_dir, _GCODE_FILE_FILTER,
         )
@@ -372,11 +397,18 @@ class WorkpieceDetailPage(QWidget):
             return
 
         source = Path(path)
-        dest_folder = Path(self._workpiece.folder_path)
+        dest_folder = absolute_folder_for(self._workpiece)
+        if dest_folder is None:
+            QMessageBox.warning(
+                self, "Kein Wurzelordner konfiguriert",
+                "Der Werkstück-Ordner kann nicht aufgelöst werden — ist unter "
+                "Einstellungen -> Workpieces ein Wurzelordner konfiguriert?",
+            )
+            return
         dest_folder.mkdir(parents=True, exist_ok=True)
         dest_path = dest_folder / source.name
 
-        if source.suffix.lower() not in GCODE_EXTENSIONS:
+        if not is_gcode_file(source):
             QMessageBox.warning(
                 self, "Ungültige Datei",
                 f"\"{source.name}\" ist keine unterstützte G-Code-Datei "
@@ -447,11 +479,6 @@ class WorkpieceDetailPage(QWidget):
 
     def _on_operation_changed(self, _operation_id: int) -> None:
         self._reload()
-
-    def _on_tool_changed(self, tool_number: int) -> None:
-        row = self._tool_rows.get(tool_number)
-        if row is not None:
-            row.refresh()
 
 
 def _format_hms(seconds: float) -> str:
