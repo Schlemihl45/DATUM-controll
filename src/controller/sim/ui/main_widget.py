@@ -43,6 +43,7 @@ from controller.sim.gcode.compiler            import GCodeCompiler
 from controller.sim.simulation.player         import SimulationPlayer
 from controller.sim.simulation.tool_database  import get_tool, get_tool_by_pocket
 from controller.sim.simulation.tool_definition import ToolDefinition
+from controller.sim.simulation.tool_holder    import HolderProfile
 from controller.persistence.tool_db           import ToolDatabase, ToolDatabaseSignals
 from controller.persistence.workpiece_db      import WorkpieceDatabase
 from controller.sim.core.settings             import AppSettings
@@ -163,6 +164,17 @@ class DatumSimWidget(QWidget):
         self._path_mode:            PathMode                = PathMode.FULL
         self._tool_mode:            ToolMode                = ToolMode.POINT
         self._current_tool:         ToolDefinition | None   = None
+        # The (tool, holder) pair last actually pushed to the viewport/voxel
+        # controller via _apply_tool() — lets it skip the expensive mesh
+        # rebuild entirely when nothing changed (see _apply_tool()'s own
+        # docstring: this used to run unconditionally on every set_mode()
+        # call, i.e. every Start/Stop/Feed-Hold/Reset click, at ~186-420ms
+        # each, even though the tool essentially never actually changes on
+        # those). ToolDefinition/HolderProfile are plain @dataclass, so
+        # value equality (not identity) correctly recognizes "the same
+        # tool" even across separate ToolDatabase lookups returning fresh
+        # instances with equal field values.
+        self._last_applied_holder: HolderProfile | None = None
         self._last_program                                  = None
         self._current_workpiece                             = None   # domain.models.Workpiece | None
         self._current_line:         int                     = -1
@@ -758,17 +770,34 @@ class DatumSimWidget(QWidget):
     # ── Tool management ───────────────────────────────────────────────────────
 
     def _apply_tool(self, tool: ToolDefinition | None) -> None:
+        """Push *tool* (and its resolved holder) to the viewport/voxel
+        controller/info pill — but ONLY if it's actually different from
+        what's already applied.
+
+        This guard matters a lot more than it looks: _apply_initial_tool()
+        (below) is called unconditionally from set_mode(), which itself
+        runs on EVERY Start/Stop/Feed-Hold/Reset click (via
+        MachinePage._sync_ui_state()) — not just on an actual tool change.
+        Without this check, every one of those clicks rebuilt the full 3D
+        tool mesh from scratch via viewport.set_tool_definition()/
+        set_tool_holder() (see viewport.py's _rebuild_tool_mesh(), called
+        TWICE per apply before this fix) even though the tool never
+        changes on a Stop/Feed-Hold click at all — measured at ~93ms
+        (plain endmill) to ~210ms per rebuild, i.e. ~186-420ms wasted on
+        the GUI thread per click. ToolDefinition/HolderProfile are plain
+        @dataclass, so value equality (not identity) correctly recognizes
+        "the same tool" even across separate ToolDatabase lookups that
+        return fresh instances with equal field values.
+        """
         if tool is None:
             return
-        self._current_tool = tool
-        self.viewport.set_tool_definition(tool)
-        # Resolve+push the tool's assigned holder (if any) too — a single
-        # DB lookup per tool change, not per frame. viewport.set_tool_holder()
-        # only actually renders it while AppSettings.show_tool_holder is on;
-        # the voxel controller always factors it into collision checks (its
-        # own on/off switch is AppSettings.collision_detection_enabled).
         holder = ToolDatabase.instance().get_holder(tool.holder_preset)
-        self.viewport.set_tool_holder(holder)
+        if tool == self._current_tool and holder == self._last_applied_holder:
+            return
+        self._current_tool = tool
+        self._last_applied_holder = holder
+        # One rebuild, not two — see viewport.set_tool() docstring.
+        self.viewport.set_tool(tool, holder)
         # Push to the info pill directly rather than waiting for the next
         # SIM-mode _tick() to refresh it — _tick()'s tool-label refresh only
         # ran while self._mode == "SIM", so MACHINE-mode tool changes (via

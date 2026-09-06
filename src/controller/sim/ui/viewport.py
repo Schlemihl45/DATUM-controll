@@ -371,6 +371,27 @@ class Viewport(QOpenGLWidget):
             self.doneCurrent()
             self.update()
 
+    def set_tool(self, tool: ToolDefinition, holder: HolderProfile | None) -> None:
+        """Set tool AND holder together with exactly ONE mesh rebuild.
+
+        Prefer this over calling set_tool_definition() then
+        set_tool_holder() separately — each of those triggers its own full
+        _rebuild_tool_mesh() call (measured ~93-210ms depending on tool
+        type), so doing both back-to-back (as DatumSimWidget._apply_tool()
+        used to) rebuilds the same mesh twice for no reason. The two
+        individual setters stay available for any caller that genuinely
+        only has one piece of information to update at a time (e.g. a
+        holder-only change while the tool itself is unchanged)."""
+        self._current_tool = tool
+        self._current_holder = holder
+        if hasattr(self, 'ctx'):
+            self.makeCurrent()
+            self._rebuild_tool_mesh(tool)
+            self.doneCurrent()
+        else:
+            self._pending_tool = tool
+        self.update()
+
     def _on_show_holder_changed(self, _v: bool) -> None:
         if not hasattr(self, 'ctx') or getattr(self, '_current_tool', None) is None:
             return
