@@ -503,6 +503,59 @@ QFrame#Card[expanded="true"] {
     border: 1px solid rgba(80, 120, 200, 0.6);
 }
 
+/* ToolPage: ToolCardWidget's expanded body — see dark.qss's own
+   QWidget#ToolCardBody comment for the full reasoning (zero-margin, full
+   card width, bottom-only rounding). In the light theme QFrame#Card is
+   already near-white, so the body is a plain flat white rather than a
+   second gradient — the seam is a deliberately subtle blend here, not a
+   bug: the light theme is light everywhere, this panel just settles into
+   pure white after a short fade from the header's own bottom tone. */
+QWidget#ToolCardBody {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 #ECF2FA,
+        stop: 0.12 #FFFFFF,
+        stop: 1 #FFFFFF
+    );
+    border-top-left-radius: 0px;
+    border-top-right-radius: 0px;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+QWidget#ToolCardBody QLabel {
+    color: #1E2D40;
+}
+
+QWidget#ToolCardBody QLabel#CardTitle {
+    color: #4A6080;
+}
+
+QWidget#ToolCardBody QLabel#ParamUnitLabel {
+    color: rgba(0, 0, 0, 0.45);
+}
+
+QWidget#ToolCardBody QFrame#ParamSeparator {
+    background-color: rgba(0, 0, 0, 0.12);
+}
+
+QWidget#ToolCardBody QLineEdit,
+QWidget#ToolCardBody QPlainTextEdit {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: #1E2D40;
+}
+
+QWidget#ToolCardBody QComboBox {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #1E2D40;
+}
+
 /* ui/widgets/tool_usage_card.py's ToolUsageCard toggles this "variant" to
    "in_magazine" whenever the tool currently sits in a magazine pocket —
    the exact same colours as [variant="start"] above, reused deliberately.
