@@ -208,17 +208,60 @@ class _DisplayTab(QWidget):
         self._chk_datum_symbol.toggled.connect( lambda v: setattr(s, "show_datum_symbol", v))
         self._chk_holder.toggled.connect(       lambda v: setattr(s, "show_tool_holder",  v))
 
-        # Read side: AppSettings -> widget (keeps every open instance in sync)
-        s.tool_mode_changed.connect(lambda v: _sync_combo_text(self._tool_combo, v))
-        s.path_mode_changed.connect(lambda v: _sync_combo_text(self._path_combo, v))
-        s.show_datum_changed.connect(        lambda v: _sync_checkbox(self._chk_datum,        v))
-        s.show_gcode_line_changed.connect(   lambda v: _sync_checkbox(self._chk_gcode,         v))
-        s.show_tool_changed.connect(         lambda v: _sync_checkbox(self._chk_tool,          v))
-        s.show_feedrate_changed.connect(     lambda v: _sync_checkbox(self._chk_feedrate,      v))
-        s.show_axes_changed.connect(         lambda v: _sync_checkbox(self._chk_axes,          v))
-        s.show_grid_changed.connect(         lambda v: _sync_checkbox(self._chk_grid,          v))
-        s.show_datum_symbol_changed.connect( lambda v: _sync_checkbox(self._chk_datum_symbol,  v))
-        s.show_tool_holder_changed.connect(  lambda v: _sync_checkbox(self._chk_holder,        v))
+        # Read side: AppSettings -> widget (keeps every open instance in sync).
+        # Bound methods, deliberately NOT inline lambdas: build_sections() is
+        # instantiated fresh every time a ProgramDetailPage is opened (its own
+        # DatumSimWidget -> SettingsPanel -> build_sections(), see this
+        # module's docstring) and torn down via deleteLater() on pop — while
+        # AppSettings itself is an app-lifetime singleton. A lambda closing
+        # over `self._chk_xxx` has no `__self__`, so Qt has no QObject to tie
+        # the connection's lifetime to and never auto-disconnects it; the
+        # next *_changed emission after teardown then runs the lambda against
+        # an already-deleted C++ checkbox (libshiboken RuntimeError). A bound
+        # method of `self` (a QWidget) IS recognized as belonging to that
+        # QObject, so Qt drops the connection automatically once `self`'s C++
+        # side is destroyed — same reasoning already applied to
+        # _on_bg_settings_changed/_on_enabled_changed/_on_shape_changed below.
+        s.tool_mode_changed.connect(self._on_tool_mode_changed)
+        s.path_mode_changed.connect(self._on_path_mode_changed)
+        s.show_datum_changed.connect(        self._on_show_datum_changed)
+        s.show_gcode_line_changed.connect(   self._on_show_gcode_line_changed)
+        s.show_tool_changed.connect(         self._on_show_tool_changed)
+        s.show_feedrate_changed.connect(     self._on_show_feedrate_changed)
+        s.show_axes_changed.connect(         self._on_show_axes_changed)
+        s.show_grid_changed.connect(         self._on_show_grid_changed)
+        s.show_datum_symbol_changed.connect( self._on_show_datum_symbol_changed)
+        s.show_tool_holder_changed.connect(  self._on_show_tool_holder_changed)
+
+    def _on_tool_mode_changed(self, v: str) -> None:
+        _sync_combo_text(self._tool_combo, v)
+
+    def _on_path_mode_changed(self, v: str) -> None:
+        _sync_combo_text(self._path_combo, v)
+
+    def _on_show_datum_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_datum, v)
+
+    def _on_show_gcode_line_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_gcode, v)
+
+    def _on_show_tool_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_tool, v)
+
+    def _on_show_feedrate_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_feedrate, v)
+
+    def _on_show_axes_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_axes, v)
+
+    def _on_show_grid_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_grid, v)
+
+    def _on_show_datum_symbol_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_datum_symbol, v)
+
+    def _on_show_tool_holder_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_holder, v)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -287,10 +330,8 @@ class _AppearanceTab(QWidget):
         # Read side
         s.bg_color_changed.connect(self._on_bg_settings_changed)
         s.bg_color_2_changed.connect(self._on_bg_settings_changed)
-        s.tool_cutting_color_changed.connect(
-            lambda v: (_sync_combo_text(self._tool_color_combo, v), self._update_tool_swatch()))
-        s.voxel_color_changed.connect(
-            lambda v: (_sync_combo_text(self._mat_color_combo, v), self._update_mat_swatch()))
+        s.tool_cutting_color_changed.connect(self._on_tool_color_settings_changed)
+        s.voxel_color_changed.connect(self._on_mat_color_settings_changed)
 
     def _on_bg_changed(self, _idx: int) -> None:
         self._s.apply_bg_theme(self._bg_combo.currentText())
@@ -322,6 +363,14 @@ class _AppearanceTab(QWidget):
         hex_val = self._mat_color_combo.currentData()
         if hex_val:
             self._mat_color_swatch.set_color(hex_val)
+
+    def _on_tool_color_settings_changed(self, v: str) -> None:
+        _sync_combo_text(self._tool_color_combo, v)
+        self._update_tool_swatch()
+
+    def _on_mat_color_settings_changed(self, v: str) -> None:
+        _sync_combo_text(self._mat_color_combo, v)
+        self._update_mat_swatch()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -413,12 +462,13 @@ class _VoxelSimTab(QWidget):
             lambda v: setattr(s, "collision_detection_enabled", v))
         self._safe_z_spin.valueChanged.connect(lambda v: setattr(s, "start_safe_z_mm", v))
 
-        # Read side
+        # Read side — bound methods, not lambdas: see _DisplayTab's read-side
+        # block above for why (this exact checkbox is the one that crashed
+        # with a libshiboken "already deleted" RuntimeError before this fix).
         s.voxel_enabled_changed.connect(self._on_enabled_changed)
-        s.voxel_size_changed.connect(lambda v: _sync_spin(self._size_spin, v))
-        s.collision_detection_enabled_changed.connect(
-            lambda v: _sync_checkbox(self._chk_collision, v))
-        s.start_safe_z_mm_changed.connect(lambda v: _sync_spin(self._safe_z_spin, v))
+        s.voxel_size_changed.connect(self._on_voxel_size_settings_changed)
+        s.collision_detection_enabled_changed.connect(self._on_collision_settings_changed)
+        s.start_safe_z_mm_changed.connect(self._on_safe_z_settings_changed)
 
     def _sync_size_state(self) -> None:
         self._size_spin.setEnabled(_VOXEL_AVAILABLE and self._chk.isChecked())
@@ -430,6 +480,15 @@ class _VoxelSimTab(QWidget):
     def _on_enabled_changed(self, v: bool) -> None:
         _sync_checkbox(self._chk, v and _VOXEL_AVAILABLE)
         self._sync_size_state()
+
+    def _on_voxel_size_settings_changed(self, v: float) -> None:
+        _sync_spin(self._size_spin, v)
+
+    def _on_collision_settings_changed(self, v: bool) -> None:
+        _sync_checkbox(self._chk_collision, v)
+
+    def _on_safe_z_settings_changed(self, v: float) -> None:
+        _sync_spin(self._safe_z_spin, v)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -576,15 +635,16 @@ class _StockTab(QWidget):
         self._xo_spin.valueChanged.connect(lambda v: setattr(s, "stock_x_offset_mm",  v))
         self._yo_spin.valueChanged.connect(lambda v: setattr(s, "stock_y_offset_mm",  v))
 
-        # Read side
+        # Read side — bound methods, not lambdas: see _DisplayTab's read-side
+        # block above for why.
         s.stock_shape_changed.connect(self._on_shape_changed)
-        s.stock_z_offset_changed.connect(lambda v: _sync_spin(self._z_spin, v))
-        s.stock_height_changed.connect(  lambda v: _sync_spin(self._h_spin, v))
-        s.stock_round_radius_changed.connect(lambda v: _sync_spin(self._r_spin, v))
-        s.stock_width_changed.connect(   lambda v: _sync_spin(self._w_spin, v))
-        s.stock_depth_changed.connect(   lambda v: _sync_spin(self._d_spin, v))
-        s.stock_x_offset_changed.connect(lambda v: _sync_spin(self._xo_spin, v))
-        s.stock_y_offset_changed.connect(lambda v: _sync_spin(self._yo_spin, v))
+        s.stock_z_offset_changed.connect(self._on_z_settings_changed)
+        s.stock_height_changed.connect(  self._on_h_settings_changed)
+        s.stock_round_radius_changed.connect(self._on_r_settings_changed)
+        s.stock_width_changed.connect(   self._on_w_settings_changed)
+        s.stock_depth_changed.connect(   self._on_d_settings_changed)
+        s.stock_x_offset_changed.connect(self._on_xo_settings_changed)
+        s.stock_y_offset_changed.connect(self._on_yo_settings_changed)
 
     def _on_shape(self, idx: int) -> None:
         if 0 <= idx < len(_SHAPE_KEYS):
@@ -601,6 +661,27 @@ class _StockTab(QWidget):
             self._shape_combo.setCurrentIndex(idx)
             self._shape_combo.blockSignals(False)
         self._sync_radius_row()
+
+    def _on_z_settings_changed(self, v: float) -> None:
+        _sync_spin(self._z_spin, v)
+
+    def _on_h_settings_changed(self, v: float) -> None:
+        _sync_spin(self._h_spin, v)
+
+    def _on_r_settings_changed(self, v: float) -> None:
+        _sync_spin(self._r_spin, v)
+
+    def _on_w_settings_changed(self, v: float) -> None:
+        _sync_spin(self._w_spin, v)
+
+    def _on_d_settings_changed(self, v: float) -> None:
+        _sync_spin(self._d_spin, v)
+
+    def _on_xo_settings_changed(self, v: float) -> None:
+        _sync_spin(self._xo_spin, v)
+
+    def _on_yo_settings_changed(self, v: float) -> None:
+        _sync_spin(self._yo_spin, v)
 
     def _sync_radius_row(self) -> None:
         is_round = (self._shape_combo.currentIndex() == _SHAPE_KEYS.index("round"))
