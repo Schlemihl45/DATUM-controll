@@ -59,8 +59,15 @@ _NAV_ICON_SIZE = QSize(256, 256)
 
 
 def _nav_button(icon_name: str) -> CardButton:
-    """Big square icon-only button for the home-page navigation grid."""
-    return CardButton(icon=get_icon(icon_name, size=_NAV_ICON_SIZE), icon_size=256)
+    """Big square icon-only button for the home-page navigation grid.
+
+    Explicit tint=True (not the get_icon() default — see its own docstring
+    for why the default itself is True): every nav icon (machine/tools/
+    setup/workpieces/statistics/settings) is a plain two-tone grey/white
+    SVG, verified safe to flatten to the theme's icon color, unlike e.g.
+    logo.svg's branded blue.
+    """
+    return CardButton(icon=get_icon(icon_name, tint=True, size=_NAV_ICON_SIZE), icon_size=256)
 
 
 class MainWindow(QMainWindow):
@@ -77,7 +84,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("DATUM Control")
         self.resize(600, 900)
-        self.setWindowIcon(get_icon("logo"))
+        # Explicit tint=False (against get_icon()'s own True default): the
+        # logo is multi-color (brand blue #08407D) — tinting it would flatten
+        # it to a single flat color and destroy the brand look.
+        self.setWindowIcon(get_icon("logo", tint=False))
 
         # -------------------------------------------------------
         # Status bar
@@ -176,13 +186,15 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         button_row.setSpacing(6)
 
-        self.light_btn = CardButton(icon=get_icon("light_off", size=QSize(48, 48)), icon_size=48)
+        self.light_btn = CardButton(
+            icon=get_icon("light_off", tint=True, size=QSize(48, 48)), icon_size=48,
+        )
         self.light_btn.setCheckable(True)
         self.light_btn.toggled.connect(self._on_light_toggled)
         self.light_btn.setFixedSize(100, 100)
         button_row.addWidget(self.light_btn)
 
-        self.coolant_btn = CardButton(icon=get_icon("coolant_off"), icon_size=64)
+        self.coolant_btn = CardButton(icon=get_icon("coolant_off", tint=True), icon_size=64)
         self.coolant_btn.setCheckable(True)
         self.coolant_btn.toggled.connect(self._on_coolant_toggled)
         self.coolant_btn.setFixedSize(100, 100)
@@ -231,7 +243,7 @@ class MainWindow(QMainWindow):
         # button demonstrated — a second stop-like control next to Feed
         # Hold risks being mixed up with it under time pressure.
 
-        self.return_btn = CardButton(icon=get_icon("return"), icon_size=48)
+        self.return_btn = CardButton(icon=get_icon("return", tint=True), icon_size=48)
         self.return_btn.setFixedSize(100, 100)
         self.return_btn.clicked.connect(self._on_return_clicked)
         button_row.addWidget(self.return_btn)
@@ -356,7 +368,7 @@ class MainWindow(QMainWindow):
         mdi_command = f"M64 P{_LIGHT_MDI_PIN}" if checked else f"M65 P{_LIGHT_MDI_PIN}"
         self._controller.send_mdi(mdi_command)
         icon_name = "light_on" if checked else "light_off"
-        self.light_btn.set_icon(get_icon(icon_name, size=QSize(48, 48)))
+        self.light_btn.set_icon(get_icon(icon_name, tint=True, size=QSize(48, 48)))
 
     def _on_coolant_toggled(self, checked: bool) -> None:
         if checked:
@@ -368,4 +380,6 @@ class MainWindow(QMainWindow):
         # caveat MachinePage's own buttons have; a future "reflect real
         # backend state" pass would need MachineController to warn on
         # rejected coolant commands the way it already does for MDI.
-        self.coolant_btn.set_icon(get_icon("coolant_on" if checked else "coolant_off"))
+        self.coolant_btn.set_icon(
+            get_icon("coolant_on" if checked else "coolant_off", tint=True)
+        )

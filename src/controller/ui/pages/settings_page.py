@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -177,6 +178,78 @@ class _SafetyTab(QWidget):
             self._chk_before_start.blockSignals(False)
 
 
+class _ManualTab(QWidget):
+    """Jog speed presets used by ManualPage's JogControlPanel
+    (ui/widgets/jog_control_panel.py) — no backend Rapid-jog mode exists,
+    so Feed vs. Rapid there is purely these two velocity values, swapped by
+    the jog pad's own Rapid toggle button."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        s = AppSettings.instance()
+        self._s = s
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        root.addWidget(_section_label("Jog-Geschwindigkeit"))
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self._feed_spin = QDoubleSpinBox()
+        self._feed_spin.setRange(0.1, 500.0)
+        self._feed_spin.setDecimals(1)
+        self._feed_spin.setSuffix(" mm/s")
+        self._feed_spin.setToolTip(
+            "Jog-Geschwindigkeit, solange der Eilgang-Umschalter (Rapid) "
+            "im Jog-Pad NICHT aktiv ist."
+        )
+        form.addRow("Feed", self._feed_spin)
+
+        self._rapid_spin = QDoubleSpinBox()
+        self._rapid_spin.setRange(0.1, 2000.0)
+        self._rapid_spin.setDecimals(1)
+        self._rapid_spin.setSuffix(" mm/s")
+        self._rapid_spin.setToolTip(
+            "Jog-Geschwindigkeit, solange der Eilgang-Umschalter (Rapid) "
+            "im Jog-Pad aktiv ist. Sicherheitsrelevant — mit Bedacht wählen."
+        )
+        form.addRow("Rapid", self._rapid_spin)
+
+        root.addLayout(form)
+        root.addStretch()
+
+        for spin, val in (
+            (self._feed_spin, s.jog_feed_velocity_mm_s),
+            (self._rapid_spin, s.jog_rapid_velocity_mm_s),
+        ):
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+
+        self._feed_spin.valueChanged.connect(
+            lambda v: setattr(s, "jog_feed_velocity_mm_s", v))
+        self._rapid_spin.valueChanged.connect(
+            lambda v: setattr(s, "jog_rapid_velocity_mm_s", v))
+
+        s.jog_feed_velocity_mm_s_changed.connect(self._on_feed_changed)
+        s.jog_rapid_velocity_mm_s_changed.connect(self._on_rapid_changed)
+
+    def _on_feed_changed(self, v: float) -> None:
+        if abs(self._feed_spin.value() - v) > 1e-9:
+            self._feed_spin.blockSignals(True)
+            self._feed_spin.setValue(v)
+            self._feed_spin.blockSignals(False)
+
+    def _on_rapid_changed(self, v: float) -> None:
+        if abs(self._rapid_spin.value() - v) > 1e-9:
+            self._rapid_spin.blockSignals(True)
+            self._rapid_spin.setValue(v)
+            self._rapid_spin.blockSignals(False)
+
+
 def _section_label(text: str) -> QLabel:
     """Styled section heading label."""
     lbl = QLabel(text)
@@ -276,6 +349,7 @@ class SettingsPage(QWidget):
         general_sections: list[tuple[str, str, QWidget]] = [
             ("light", "Theme", _ThemeTab(theme_manager, self)),
             ("scan-cube", "Sicherheit", _SafetyTab(self)),
+            ("setup", "Manuell", _ManualTab(self)),
         ]
         general_page = _NavStack(general_sections, parent=self)
 

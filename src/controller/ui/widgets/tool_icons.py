@@ -28,4 +28,8 @@ _ICON_NAMES: dict[ToolType, str] = {
 
 def tool_type_icon(tool_type: ToolType, size: int = 24) -> QIcon:
     name = _ICON_NAMES.get(tool_type, "endmill")
-    return get_icon(name, size=QSize(size, size), color="#D6D6D6")
+    # Explicit tint=True: activates the color= override below (previously a
+    # no-op — get_icon() only applies `color` when tint=True, and this call
+    # relied on tint's old False default, so every tool-type icon silently
+    # kept its own SVG colors instead of the intended uniform #D6D6D6).
+    return get_icon(name, size=QSize(size, size), color="#D6D6D6", tint=True)
