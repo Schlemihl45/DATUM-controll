@@ -142,7 +142,20 @@ class ToolCardWidget(Card):
         self._expanded = False
         self._loading = False
 
-        self.content_layout.setSpacing(10)
+        # Card's own outer 16px margin (card.py) normally frames content_layout
+        # as a whole — that's exactly what made the expanded body look like a
+        # separate, inset box floating inside the card instead of a full-width
+        # second half of one continuous shape. Zeroed out HERE, locally, not
+        # in card.py itself, so every other Card/CardButton keeps its normal
+        # padding; header/body each restore their own inner padding below
+        # instead. content_layout spacing zeroed too, so header and body sit
+        # flush against each other with no gap revealing the Card's own
+        # background between them — the header/body colors (see
+        # QWidget#ToolCardBody in dark.qss/light.qss) then read as one
+        # rounded rectangle with a horizontal color seam, not two stacked
+        # boxes.
+        self.layout().setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # ── Header ───────────────────────────────────────────────────────────
@@ -153,7 +166,7 @@ class ToolCardWidget(Card):
         self._header.drag_started.connect(self.drag_started)
         self._header.drag_finished.connect(self.drag_finished)
         header_row = QHBoxLayout(self._header)
-        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setContentsMargins(16, 16, 16, 16)
         header_row.setSpacing(10)
 
         self._type_icon_lbl = QLabel()
@@ -185,21 +198,17 @@ class ToolCardWidget(Card):
         self.content_layout.addWidget(self._header)
 
         # ── Body (built once; shown/hidden on expand/collapse) ─────────────────
+        # objectName is the sole hook for its look — a static QWidget#ToolCardBody
+        # rule in dark.qss/light.qss gives it a light background (bottom-only
+        # rounded corners + a soft gradient blend where it meets the header)
+        # and dark text for its own labels/inputs. No AppSettings involved:
+        # this is one widget's fixed appearance per theme, not a user
+        # preference — see those QSS files for the actual colors.
         self._body = QWidget(self)
         self._body.setObjectName("ToolCardBody")
         self._body.setVisible(False)
         self._build_body()
         self.content_layout.addWidget(self._body)
-
-        # Body background colour — user-configurable (Settings -> Tools ->
-        # Darstellung), independent of the header, which always keeps the
-        # plain QFrame#Card look. Set via inline stylesheet on self._body
-        # only (not QSS in dark.qss/light.qss), since the color is a
-        # runtime AppSettings value the static theme files can't read —
-        # same reasoning as sim_panel.py's _ColorSwatch._update_style().
-        self._settings = AppSettings.instance()
-        self._apply_body_color()
-        self._settings.toolcard_body_color_changed.connect(self._on_body_color_changed)
 
         self.set_tool(tool)
 
@@ -236,7 +245,12 @@ class ToolCardWidget(Card):
 
     def _build_body(self) -> None:
         root = QVBoxLayout(self._body)
-        root.setContentsMargins(0, 6, 0, 0)
+        # Left/right/bottom padding used to come for free from Card's own
+        # 16px outer margin (now zeroed in __init__ so the body can span the
+        # card's full width) — restored here instead, scoped to the body
+        # alone. Slightly more top margin than the old 6px to leave room for
+        # the header/body gradient seam (see QWidget#ToolCardBody's QSS).
+        root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(12)
 
         upper = QHBoxLayout()
@@ -441,16 +455,6 @@ class ToolCardWidget(Card):
 
     def is_expanded(self) -> bool:
         return self._expanded
-
-    def _apply_body_color(self) -> None:
-        r, g, b = self._settings.toolcard_body_color_rgb()
-        hex_val = "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
-        self._body.setStyleSheet(
-            f"QWidget#ToolCardBody {{ background: {hex_val}; border-radius: 8px; }}"
-        )
-
-    def _on_body_color_changed(self, _name: str) -> None:
-        self._apply_body_color()
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
