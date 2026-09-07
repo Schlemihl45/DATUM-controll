@@ -338,9 +338,22 @@ class WorkpieceBrowserPage(QWidget):
 
         header = QHBoxLayout()
         header.setContentsMargins(12, 8, 12, 4)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
         title = QLabel(relative_path.rsplit("/", 1)[-1] if relative_path else "Werkstücke")
         title.setObjectName("CardTitle")
-        header.addWidget(title)
+        title_col.addWidget(title)
+
+        # Full path from the workpieces root — the title above only shows
+        # THIS level's own folder name, which stops being enough to tell
+        # where you are once folders nest more than one level deep.
+        if relative_path:
+            path_lbl = ElidedLabel()
+            path_lbl.setObjectName("WorkpieceCardInfo")
+            path_lbl.set_full_text("Werkstücke / " + relative_path.replace("/", " / "))
+            title_col.addWidget(path_lbl)
+        header.addLayout(title_col)
         header.addStretch(1)
 
         self._sync_btn = QToolButton()

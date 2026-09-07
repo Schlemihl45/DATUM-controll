@@ -24,6 +24,7 @@ import logging
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from controller.sim.core.settings import AppSettings
 from controller.ui.icon_loader import get_icon
 from controller.ui.widgets.card_button import CardButton
 
@@ -117,6 +119,62 @@ class _ThemeTab(QWidget):
                 self._theme_combo.setCurrentIndex(i)
                 self._theme_combo.blockSignals(False)
                 break
+
+
+class _SafetyTab(QWidget):
+    """App-wide safety settings — currently just whether Start pre-flights
+    the loaded program with a whole-program collision scan.
+
+    Deliberately separate from the "Kollisionserkennung" checkbox in the
+    Simulation -> Simulation section (sim_panel.py's _VoxelSimTab): that one
+    only gates the voxel engine's own live/simulation collision feedback
+    (always informational, never stops anything — see machine_page.py's
+    _on_live_collision()); this one decides whether MachinePage.Start runs
+    presim_check_collisions() at all before launching the program. Enabling
+    in-simulation collision detection does NOT imply this pre-start check
+    should run too — they're independent switches."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        s = AppSettings.instance()
+        self._s = s
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        root.addWidget(_section_label("Sicherheit"))
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self._chk_before_start = QCheckBox()
+        self._chk_before_start.setToolTip(
+            "Prüft den gesamten Werkzeugweg auf Kollisionen, bevor das "
+            "Programm über Start tatsächlich losläuft. Eine erkannte "
+            "Kollision blockiert Start hinter einer Bestätigung "
+            "(\"Trotzdem starten\") statt automatisch loszulaufen.\n\n"
+            "Unabhängig von der Kollisionserkennung in den "
+            "Simulations-Einstellungen — die ist rein informativ und "
+            "läuft unabhängig davon, ob dieser Vorab-Check aktiv ist."
+        )
+        self._chk_before_start.blockSignals(True)
+        self._chk_before_start.setChecked(s.collision_check_before_start_enabled)
+        self._chk_before_start.blockSignals(False)
+        form.addRow("Kollisionserkennung vor Programmstart", self._chk_before_start)
+        root.addLayout(form)
+
+        root.addStretch()
+
+        self._chk_before_start.toggled.connect(
+            lambda v: setattr(s, "collision_check_before_start_enabled", v))
+        s.collision_check_before_start_enabled_changed.connect(self._on_external_change)
+
+    def _on_external_change(self, v: bool) -> None:
+        if self._chk_before_start.isChecked() != v:
+            self._chk_before_start.blockSignals(True)
+            self._chk_before_start.setChecked(v)
+            self._chk_before_start.blockSignals(False)
 
 
 def _section_label(text: str) -> QLabel:
@@ -217,6 +275,7 @@ class SettingsPage(QWidget):
 
         general_sections: list[tuple[str, str, QWidget]] = [
             ("light", "Theme", _ThemeTab(theme_manager, self)),
+            ("scan-cube", "Sicherheit", _SafetyTab(self)),
         ]
         general_page = _NavStack(general_sections, parent=self)
 

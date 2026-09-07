@@ -49,6 +49,7 @@ class AppSettings(QObject):
 
     show_tool_holder_changed = Signal(bool)
     collision_detection_enabled_changed = Signal(bool)
+    collision_check_before_start_enabled_changed = Signal(bool)
 
     tool_db_path_changed             = Signal(str)
     workpiece_db_path_changed        = Signal(str)
@@ -387,6 +388,22 @@ class AppSettings(QObject):
     def collision_detection_enabled(self, v: bool) -> None:
         self._qs.setValue("sim/collision_detection_enabled", bool(v))
         self.collision_detection_enabled_changed.emit(bool(v))
+
+    @property
+    def collision_check_before_start_enabled(self) -> bool:
+        """Whether MachinePage runs the whole-program collision pre-check
+        (DatumSimWidget.presim_check_collisions()) before Start actually
+        launches the program. Independent of collision_detection_enabled
+        above — that one only gates the voxel engine's own live/simulation
+        checking, not whether Start pre-flights the program at all. Default
+        False — the pre-start check is opt-in, unlike the always-on
+        in-simulation collision feedback."""
+        return self._qs.value("sim/collision_check_before_start_enabled", False, type=bool)
+
+    @collision_check_before_start_enabled.setter
+    def collision_check_before_start_enabled(self, v: bool) -> None:
+        self._qs.setValue("sim/collision_check_before_start_enabled", bool(v))
+        self.collision_check_before_start_enabled_changed.emit(bool(v))
 
     # ── Persistence paths ──────────────────────────────────────────────────────
 
