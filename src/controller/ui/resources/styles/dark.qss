@@ -506,6 +506,67 @@ QFrame#Card[expanded="true"] {
     border: 1px solid rgba(120, 155, 230, 0.55);
 }
 
+/* ToolPage: ToolCardWidget's expanded body (tool_card_widget.py's
+   self._body) — a light "paper" panel below the always-dark header, full
+   card width (see that widget's __init__ comment on zeroing Card's own
+   16px outer margin). Only the BOTTOM two corners are rounded, matching
+   QFrame#Card's own 6px radius exactly, so the flush, zero-margin body
+   reads as the bottom half of ONE rounded rectangle rather than a second
+   box; the top edge is square where it meets the header. The gradient's
+   first stop is close to QFrame#Card's own bottom gradient stop
+   (rgba(35,42,53)) so the header/body seam blends over a few pixels
+   instead of cutting hard. */
+QWidget#ToolCardBody {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 #3A4454,
+        stop: 0.10 #EEF0F3,
+        stop: 1 #EEF0F3
+    );
+    border-top-left-radius: 0px;
+    border-top-right-radius: 0px;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+/* Everything inside the light body reads dark-on-light, independent of
+   the app's own dark theme — this panel is deliberately its own fixed
+   "paper" look, not a themed surface. Scoped to #ToolCardBody so none of
+   these override the same widget types used elsewhere (e.g. the header's
+   own collapsed info grid, other Cards' QComboBox/QLineEdit). */
+QWidget#ToolCardBody QLabel {
+    color: #2A2E36;
+}
+
+QWidget#ToolCardBody QLabel#CardTitle {
+    color: #5A6472;
+}
+
+QWidget#ToolCardBody QLabel#ParamUnitLabel {
+    color: rgba(0, 0, 0, 0.45);
+}
+
+QWidget#ToolCardBody QFrame#ParamSeparator {
+    background-color: rgba(0, 0, 0, 0.12);
+}
+
+QWidget#ToolCardBody QLineEdit,
+QWidget#ToolCardBody QPlainTextEdit {
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: #2A2E36;
+}
+
+QWidget#ToolCardBody QComboBox {
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #2A2E36;
+}
+
 /* ui/widgets/tool_usage_card.py's ToolUsageCard (shared by
    WorkpieceDetailPage's aggregated tool list and ProgramDetailPage's own)
    toggles this "variant" to "in_magazine" whenever ToolDatabaseSignals
