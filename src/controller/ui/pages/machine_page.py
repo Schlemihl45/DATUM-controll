@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from controller.core.machine.controller import ErrorSeverity, MachineController, MachineError
 from controller.domain.models import Position, ProgramState
+from controller.sim.core.settings import AppSettings
 from controller.sim.gcode.compiler import validate_tools
 from controller.sim.simulation.tool_database import get_tool_by_pocket
 from controller.ui.icon_loader import get_icon
@@ -460,11 +461,20 @@ class MachinePage(QWidget):
         gcode/compiler.py's ToolChange.pocket_number docstring and
         validate_tools()) — empty pockets block Start outright, behind an
         error dialog listing them (no "start anyway" — there's nothing to
-        insert to work around it). Only once that passes does the existing
-        fast whole-program collision pre-check run in the background —
-        see DatumSimWidget.presim_check_collisions(). A clean program
-        starts exactly as before with no perceptible delay; a detected
-        collision blocks Start behind a confirmation dialog instead.
+        insert to work around it). Only once that passes — and only if
+        AppSettings.collision_check_before_start_enabled is on (Settings ->
+        General -> Sicherheit; off by default) — does the whole-program
+        collision pre-check run in the background: see
+        DatumSimWidget.presim_check_collisions(). This is a separate switch
+        from AppSettings.collision_detection_enabled (Settings -> Simulation
+        -> Simulation), which only gates the always-informational, never-
+        blocking collision feedback shown while a program is actually
+        running/simulating (see _on_live_collision()) — enabling that one
+        does not by itself make Start pre-flight the program too. With the
+        pre-start check off, Start launches the program immediately, same
+        as before this setting existed. With it on: a clean program starts
+        with no perceptible delay; a detected collision blocks Start behind
+        a confirmation dialog instead.
         """
         if self._controller.feed_hold:
             # Program never stopped — Start's job here is just to release
@@ -499,6 +509,10 @@ class MachinePage(QWidget):
         tool_validation = validate_tools(self._sim.tool_changes, get_tool_by_pocket)
         if not tool_validation.ok:
             self._show_missing_tools_dialog(tool_validation)
+            return
+
+        if not AppSettings.instance().collision_check_before_start_enabled:
+            self._controller.run_program(self._loaded_path)
             return
 
         self._sim.presim_check_collisions(self._on_presim_collision_checked)
@@ -547,35 +561,36 @@ class MachinePage(QWidget):
             self._sim.viewport.set_collision(True, hit.point)
 
     def _on_live_collision(self, hit) -> None:
-        """A collision detected DURING a real MACHINE-mode run — unlike the
-        pre-flight check above, there is no "start anyway": the tool has
-        already touched something it shouldn't have, so the machine is
-        stopped immediately and the operator must acknowledge before doing
-        anything else.
+        """A collision detected DURING a real MACHINE-mode run.
+
+        Purely informative — same as the sim widget's own pill/tool-tint
+        feedback (see DatumSimWidget._handle_collision_state()'s
+        docstring): this is a SIMULATED prediction (voxel model vs.
+        toolpath), not a physical sensor reading, so it must never by
+        itself stop or pause the machine. That holds unconditionally, not
+        only after the operator dismissed the pre-start check with
+        "Trotzdem starten" — there is no code path left here that calls
+        stop_program()/set_feed_hold() off the back of a collision hit.
+        Acting on a detected collision (Feed-Hold/Stop) is always the
+        operator's own call, never automatic.
 
         collision_detected also fires while just scrubbing/playing back a
-        program in SIM mode (no real machine involved) — DatumSimWidget
-        already self-pauses SIM playback for that case, so this handler
-        only escalates to a real stop_program() + blocking dialog when a
-        machine program is actually RUNNING; a SIM-mode-only hit is left to
-        the sim widget's own pause + warning-tinted tool + collision pill.
+        program in SIM mode (no real machine involved) — this handler only
+        surfaces the notice through the status bar while a machine program
+        is actually RUNNING; a SIM-mode-only hit is left to the sim
+        widget's own warning-tinted tool + collision pill.
         """
         if self._controller.program_state != ProgramState.RUNNING:
             return
-        self._controller.stop_program()
-
-        from PySide6.QtWidgets import QMessageBox
 
         line = hit.line_number if hit.line_number >= 0 else "?"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Critical)
-        box.setWindowTitle("Kollision erkannt")
-        box.setText(
-            f"Kollision erkannt bei Zeile {line} ({hit.kind}).\n\n"
-            "Die Maschine wurde gestoppt."
+        self._controller.error_occurred.emit(
+            MachineError(
+                f"Kollision erkannt bei Zeile {line} ({hit.kind}) — "
+                "rein informative Meldung, die Maschine läuft weiter.",
+                ErrorSeverity.WARNING, source="MachinePage",
+            )
         )
-        box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
-        box.exec()
 
     def _on_feed_hold_clicked(self) -> None:
         """One-way trigger: engages feed-hold. Releasing it happens via
