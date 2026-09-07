@@ -71,12 +71,14 @@ def _create_backend(simulate: bool) -> AbstractBackend:
         from controller.core.backends.simulated import SimulatedBackend
         return SimulatedBackend()
 
-    # Phase 2 — real hardware. LinuxCNCBackend only carries a docstring so
-    # far (see core/backends/linuxcnc.py); fail loudly instead of letting
-    # Python raise a confusing "Can't instantiate abstract class" error.
-    raise NotImplementedError(
-        "LinuxCNCBackend is not implemented yet. Run with --simulate."
-    )
+    # Phase 2 — real hardware (see core/backends/linuxcnc.py). Imported
+    # lazily so --simulate never requires the `linuxcnc` Python module,
+    # which isn't installed on a machine without LinuxCNC. If it's still
+    # missing here, LinuxCNCBackend itself raises a clear
+    # LinuxCNCNotAvailableError instead of a confusing
+    # "Can't instantiate abstract class" or ModuleNotFoundError.
+    from controller.core.backends.linuxcnc import LinuxCNCBackend
+    return LinuxCNCBackend()
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
