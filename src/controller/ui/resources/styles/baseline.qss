@@ -1,0 +1,486 @@
+/* =========================================================
+   DATUM Control — Theme "Baseline"
+   Identisch zu dark.qss, mit einer bewussten Abweichung:
+   die Signalkarten (Start/Stop/Feed-Hold) verwenden keinen
+   radialen Verlauf mehr, sondern eine flache Füllfarbe. Die
+   Farbwerte selbst (Grün/Rot) sind unverändert — nur die
+   Verlaufstechnik wurde entfernt, wie gewünscht.
+   ========================================================= */
+
+QMainWindow {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 1,
+        stop: 0 #141b26,
+        stop: 1 #0b0f16
+    );
+}
+
+/* "Create new tool" popup (tool_list_card.py's CreateToolDialog) — a
+   plain QDialog has no rule anywhere else in the app, so without one it
+   paints Qt's default (light) palette background, clashing badly with
+   the ToolCardWidget floating on top of it. Same gradient as
+   QMainWindow, scoped to this dialog only (not QMessageBox/QInputDialog
+   elsewhere, which already work fine with native chrome and aren't part
+   of this change). */
+QDialog#CreateToolDialog {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 1,
+        stop: 0 #141b26,
+        stop: 1 #0b0f16
+    );
+}
+
+/* Plain QScrollArea (ToolPage's ToolListView/ToolMagazineBar — the only
+   two in the app) has no rule of its own anywhere below, so both its
+   frame and its viewport paint Qt's default (opaque, light) palette
+   background — a jarring gray box that doesn't belong on this app's
+   gradient pages. Making the scroll area AND its viewport's child
+   widget transparent lets the page gradient underneath show through
+   instead, matching every other page/Card look. */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+
+/* Scrollbars — Qt's native ones (used by ToolListView, ToolMagazineBar,
+   and ToolCardWidget's horizontal parameter strip) are unstyled/native-
+   look by default and clash with the rest of this app; thin, transparent
+   track, no arrow buttons, a muted rounded handle that brightens on
+   hover — the common modern-minimal scrollbar pattern. */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px 2px 2px 0;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 0.18);
+    min-height: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: rgba(255, 255, 255, 0.32);
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+    width: 0;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0 2px 2px 2px;
+}
+
+QScrollBar::handle:horizontal {
+    background: rgba(255, 255, 255, 0.18);
+    min-width: 24px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: rgba(255, 255, 255, 0.32);
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    height: 0;
+    width: 0;
+    background: none;
+    border: none;
+}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+/* --- Card (ui/widgets/card.py) --- */
+QFrame#Card {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 rgba(45, 55, 72, 255),
+        stop: 1 rgba(35, 42, 53, 255)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+}
+
+
+QLabel#CardTitle {
+    color: #8CA9C7;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Card Button */
+QLabel#CardButtonLabel {
+    color: #E7EBF0;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#CardButtonIcon {
+    color: #8fa0ba;
+}
+
+/* kleinere Variante für die QuickToolBar unten */
+QFrame#Card[variant="quick"] {
+    padding: 4px;
+}
+
+/* --- StatusBar (ui/widgets/status_bar.py) --- */
+QWidget#StatusBar {
+    background-color: transparent;
+    border-bottom: 1px solid rgba(88, 140, 196, 0.10);
+}
+
+QLabel#StatusBarLog {
+    color: #8fa0ba;
+    font-size: 12px;
+}
+
+QLabel#StatusBarLog[severity="warning"] {
+    color: #FFB020;
+}
+
+QLabel#StatusBarLog[severity="error"] {
+    color: #E5484D;
+    font-weight: 600;
+}
+
+QLabel#StatusBarClock {
+    color: #E7EBF0;
+    font-size: 12px;
+    font-family: "Helvetica", monospace;
+}
+
+QWidget#machine_info_panel{
+    background-color: green;
+}
+
+QLabel#InfoAxisLetter{
+    font-size: 24px;
+    color: #8CA9C7;
+}
+QLabel#InfoValue{
+    font-size: 32px;
+    font-weight: bold;
+    font-family: "Helvetica", monospace;
+}
+QLabel#InfoUnit{
+    font-size: 12px;
+    color: #8CA9C7;
+}
+
+QFrame#InfoDivider {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 rgba(110, 155, 205, 0),
+    stop:0.5 rgba(110, 155, 205, 55),
+    stop:1 rgba(110, 155, 205, 0));
+    border-radius: 1px;
+}
+
+/* Signalkarte "Start" — flach statt radialem Verlauf, Farbwert
+   unverändert (heller der beiden bisherigen Verlaufs-Stops). */
+QFrame#Card[variant="start"] {
+    background: #639922;
+}
+
+QFrame#Card[variant="start"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
+/* Signalkarte "Stop" — flach statt radialem Verlauf, Farbwert
+   unverändert (heller der beiden bisherigen Verlaufs-Stops). */
+QFrame#Card[variant="stop"] {
+    background: #FFC107;
+}
+
+QFrame#Card[variant="stop"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
+QFrame#Card[variant="reset"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
+/* Disabled buttons keep the state signal on the background alone (per
+   the app's dimming convention); labels/icons just follow Qt's default
+   disabled palette dimming, no extra rule needed. */
+
+QFrame#Card[variant="single_block"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 rgba(45, 55, 72, 255),
+        stop: 1 rgba(35, 42, 53, 255)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+QFrame#Card[variant="single_block"][checked="true"] {
+    background: #4C6FE0;
+    border: 1px solid rgba(120, 155, 230, 0.5);
+}
+
+/* Feed Hold — app-wide quick bar (main_window.py). Dieselbe Rot-Signalfarbe
+   wie die Stop-Karte, deshalb hier ebenfalls flach statt radial verlaufend,
+   damit beide "Stop"-artigen Bedienelemente konsistent aussehen. Grau-
+   Zustand (engaged) bleibt unverändert ein Verlauf, da das kein Signalton
+   ist, sondern ein neutraler "aktiv"-Zustand. */
+QFrame#Card[variant="feed_hold"] {
+    background: #FFC107;
+}
+
+QFrame#Card[variant="feed_hold"]:disabled {
+    background: #2A2E36;
+    border: 1px solid rgba(255, 255, 255, 8%);
+}
+
+QPlainTextEdit#GCodeView {
+    background: qlineargradient(
+        x1: 0, y1: 0,
+        x2: 0, y2: 48,
+        stop: 0 #262f40,
+        stop: 1 #212939
+    );
+    border: 1px solid rgba(88, 140, 196, 0.10);
+    border-radius: 8px;
+    padding: 8px;
+}
+
+QWidget#ScrollFadeTop {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(38,47,64,255),
+        stop:0.4 rgba(150,165,190,55),
+        stop:1 rgba(38,47,64,0));
+}
+QWidget#ScrollFadeBottom {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(38,47,64,0),
+        stop:0.6 rgba(150,165,190,55),
+        stop:1 rgba(38,47,64,255));
+}
+
+QSlider::groove:horizontal {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+
+QSlider::handle:horizontal {
+    background: #5FA8E0;
+    width: 32px;
+    height: 32px;
+    margin: -12px 0;
+    border-radius: 16px;
+}
+
+QSlider::handle:horizontal:pressed {
+    background: #8CA9C7;
+}
+
+QSlider::sub-page:horizontal {
+    background: rgba(95, 168, 224, 0.35);
+    border-radius: 4px;
+}
+
+/* --- Sim-widget overlay panel (sim/ui/overlay/settings_panel.py) ---
+   Card variant so the slide-out strip/panel follows the app theme
+   instead of a fixed hard-coded gray. Only the left corners are square
+   (right-edge-anchored panel); the strip sits flush against the panel. */
+QFrame#Card[variant="sim_overlay"] {
+    background: qradialgradient(
+        cx: 0.15, cy: 0.1, radius: 1.1,
+        fx: 0.15, fy: 0.1,
+        stop: 0 rgba(45, 55, 72, 235),
+        stop: 1 rgba(35, 42, 53, 235)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+/* --- Sim-panel nav buttons (settings_panel.py outer strip, sim_panel.py
+   left-hand section nav) — a small checkable icon tile, native look
+   instead of the default Qt checked/sunken button style. --- */
+QFrame#Card[variant="sim_nav"] {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+}
+
+QFrame#Card[variant="sim_nav"][checked="true"] {
+    background: rgba(76, 111, 224, 0.22);
+    border: 1px solid rgba(120, 155, 230, 0.45);
+}
+
+QComboBox {
+    background: rgba(45, 55, 72, 200);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #E7EBF0;
+}
+
+QComboBox::drop-down {
+    border: none;
+}
+
+QPushButton {
+    background: rgba(45, 55, 72, 200);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+    padding: 6px 12px;
+    color: #E7EBF0;
+}
+
+QPushButton:hover {
+    background: rgba(60, 75, 96, 255);
+}
+
+QPushButton:pressed {
+    background: rgba(35, 42, 53, 255);
+}
+
+/* ToolPage: "In Magazine" filter toggle (tool_filter_bar.py) — plain
+   QPushButton rather than the Card-based CardButton (Card's hardcoded
+   16px margins don't fit a compact, row-height toggle). Base look/hover/
+   pressed already come from the generic QPushButton rule above; only the
+   checked state is new. */
+QPushButton#ToolFilterToggle:checked {
+    background: rgba(76, 111, 224, 0.35);
+    border: 1px solid rgba(120, 155, 230, 0.6);
+    color: #FFFFFF;
+}
+
+/* ToolPage: per-card "..." options-menu button (tool_card_widget.py's
+   ToolCardWidget header) — plain QToolButton for the same reason (Card's
+   margins don't fit a 36px inline icon button). No QToolButton rule
+   exists anywhere else, so this is a from-scratch style rather than an
+   override. */
+QToolButton#ToolMenuButton {
+    background: rgba(45, 55, 72, 200);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+}
+
+QToolButton#ToolMenuButton:hover {
+    background: rgba(60, 75, 96, 255);
+}
+
+QToolButton#ToolMenuButton:pressed {
+    background: rgba(35, 42, 53, 255);
+}
+
+/* ToolCardWidget's header options menu (Measure / Set Pocket Number /
+   Delete) — sized up (padding + font, iconSize is set in code) for
+   better touch targets per explicit request; QMenu has no rule anywhere
+   else in the app, so this is a from-scratch style, not an override. */
+QMenu {
+    background: rgba(35, 42, 53, 250);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 6px;
+    padding: 6px;
+    icon-size: 22px 22px;
+}
+
+QMenu::item {
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #E7EBF0;
+}
+
+QMenu::item:selected {
+    background: rgba(76, 111, 224, 0.35);
+}
+
+QMenu::separator {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.10);
+    margin: 6px 4px;
+}
+
+/* ToolPage: small "#N" pocket-number badge, used both by the magazine
+   bar's _PocketSlot and ToolCardWidget's header (tool_magazine_bar.py,
+   tool_card_widget.py) — a compact pill, distinct from the plain
+   CardButtonLabel text around it. */
+QLabel#PocketBadge {
+    background: rgba(76, 111, 224, 0.30);
+    border: 1px solid rgba(120, 155, 230, 0.5);
+    border-radius: 8px;
+    padding: 1px 6px;
+    color: #C9D6FF;
+    font-weight: 600;
+    font-size: 11px;
+}
+
+/* ToolPage: vertical divider between side-by-side parameter groups in an
+   expanded ToolCardWidget's lower body (tool_card_widget.py's _vline()) —
+   a plain QFrame with a fixed 1px width needs a background-color here to
+   actually render as a visible line; QFrame's own frame-shape styling is
+   deliberately not used since it can't be tinted to match the theme. */
+QFrame#ParamSeparator {
+    background-color: rgba(255, 255, 255, 0.10);
+    border: none;
+}
+
+/* ToolPage: small muted symbol+unit caption row in a ParamGroup cluster
+   (tool_param_group.py) — e.g. "⌀ mm", sits between the group's category
+   title and its input field. */
+QLabel#ParamUnitLabel {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+}
+
+/* ToolPage: "Create new tool" card (tool_list_card.py's _CreateToolCard) —
+   a CardButton variant, dashed border to read as an add-affordance rather
+   than a normal tool entry. */
+QFrame#Card[variant="create_tool"] {
+    border: 1px dashed rgba(120, 155, 230, 0.55);
+    background: rgba(76, 111, 224, 0.08);
+}
+
+QFrame#Card[variant="create_tool"]:hover {
+    background: rgba(76, 111, 224, 0.16);
+    border-color: rgba(140, 170, 235, 0.75);
+}
+
+/* ToolPage: expanded ToolCardWidget (dynamic "expanded" property toggled
+   in set_expanded()) — a subtle accent border marks which card is
+   currently open, without changing the base Card look everywhere else. */
+QFrame#Card[expanded="true"] {
+    border: 1px solid rgba(120, 155, 230, 0.55);
+}
+
+QLabel#ToolCardTitle {
+    font-family: "Helvetica";
+    font-size: 12px;
+    color: #8CA9C7;
+}
+
+/* Die eigentlichen Werte darunter */
+QLabel#ToolCardButtonLabel {
+    font-family: "Helvetica";
+    font-size: 16px;
+    color: #D6D6D6;
+    font-weight: bold;
+}

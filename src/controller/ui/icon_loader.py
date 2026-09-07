@@ -23,7 +23,7 @@ import logging
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
@@ -172,7 +172,19 @@ def get_icon(
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter)
+
+    # Seitenverhältnis beibehalten und SVG zentrieren
+    svg_size = renderer.defaultSize()
+    if not svg_size.isEmpty():
+        # Auf Zielgröße skalieren unter Beibehaltung des Seitenverhältnisses
+        scaled_size = svg_size.scaled(target_size, Qt.AspectRatioMode.KeepAspectRatio)
+        x = (target_size.width() - scaled_size.width()) / 2.0
+        y = (target_size.height() - scaled_size.height()) / 2.0
+        dest_rect = QRectF(x, y, scaled_size.width(), scaled_size.height())
+        renderer.render(painter, dest_rect)
+    else:
+        renderer.render(painter)
+
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
     painter.fillRect(pixmap.rect(), color or _ICON_COLOR)
     painter.end()

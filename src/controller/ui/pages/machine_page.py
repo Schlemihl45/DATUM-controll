@@ -175,7 +175,7 @@ class MachinePage(QWidget):
         self._gcode_stack.addWidget(self._gcode_no_file)   # _GCODE_NO_FILE
 
         self._gcode_view = GCodeViewer(self)
-        font = QFont("Consolas")
+        font = QFont("Helvetica")
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setPointSize(11)
         self._gcode_view.text_edit.setFont(font)
@@ -244,7 +244,7 @@ class MachinePage(QWidget):
         controls_col = QVBoxLayout()
         controls_col.setSpacing(8)
         for btn in (self._start_btn, self._feed_hold_btn, self._stop_btn,
-                    self._reset_btn, self._single_block_btn):
+                    self._single_block_btn, self._reset_btn):
             btn.setFixedSize(100, 100)
             controls_col.addWidget(btn)
         controls_col.addStretch(1)
