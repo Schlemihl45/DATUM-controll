@@ -46,6 +46,7 @@ class AppSettings(QObject):
     voxel_color_changed   = Signal(str)
 
     tool_cutting_color_changed = Signal(str)
+    toolcard_body_color_changed = Signal(str)
 
     show_tool_holder_changed = Signal(bool)
     collision_detection_enabled_changed = Signal(bool)
@@ -71,6 +72,9 @@ class AppSettings(QObject):
     tool_pocket_count_changed = Signal(int)
     has_rotary_axes_changed = Signal(bool)
 
+    jog_feed_velocity_mm_s_changed  = Signal(float)
+    jog_rapid_velocity_mm_s_changed = Signal(float)
+
     # ── Voxel colour presets ───────────────────────────────────────────────────
     VOXEL_COLORS: dict[str, tuple[float, float, float]] = {
         "Orange-Gelb":  (0.95, 0.68, 0.12),
@@ -91,6 +95,18 @@ class AppSettings(QObject):
         "Blau":            (0.25, 0.55, 0.95),
         "Rot":             (0.90, 0.25, 0.25),
         "Grün":            (0.35, 0.80, 0.35),
+    }
+
+    # ── ToolCard expanded-body colour presets ──────────────────────────────────
+    # Deliberately Header-independent: ToolCardWidget's header (_CardHeader)
+    # keeps the normal QFrame#Card background always — only self._body (the
+    # part shown while expanded) reads this. See tool_card_widget.py.
+    TOOLCARD_BODY_COLORS: dict[str, tuple[float, float, float]] = {
+        "Card-Grau (Standard)": (0.16, 0.16, 0.16),
+        "Dunkelblau":           (0.10, 0.14, 0.20),
+        "Dunkelgrün":           (0.10, 0.18, 0.12),
+        "Anthrazit":            (0.12, 0.12, 0.13),
+        "Bordeaux":             (0.22, 0.10, 0.12),
     }
 
     # Singleton ────────────────────────────────────────────────────────────────
@@ -584,6 +600,34 @@ class AppSettings(QObject):
         self._qs.setValue("sim/start_safe_z_mm", float(v))
         self.start_safe_z_mm_changed.emit(float(v))
 
+    # ── Manual jog (ManualPage / JogControlPanel) ───────────────────────────
+    # No backend Rapid-jog mode exists (jog_continuous()/jog_increment() just
+    # take a velocity, sign = direction — see MachineController's own
+    # docstrings) — Feed/Rapid on the jog pad is purely these two UI-level
+    # velocity presets, swapped by the Rapid toggle button.
+
+    @property
+    def jog_feed_velocity_mm_s(self) -> float:
+        """Jog velocity (mm/s) used while the JogControlPanel's Rapid toggle
+        is OFF. Default 10.0 mm/s."""
+        return self._qs.value("manual/jog_feed_velocity_mm_s", 10.0, type=float)
+
+    @jog_feed_velocity_mm_s.setter
+    def jog_feed_velocity_mm_s(self, v: float) -> None:
+        self._qs.setValue("manual/jog_feed_velocity_mm_s", float(v))
+        self.jog_feed_velocity_mm_s_changed.emit(float(v))
+
+    @property
+    def jog_rapid_velocity_mm_s(self) -> float:
+        """Jog velocity (mm/s) used while the JogControlPanel's Rapid toggle
+        is ON. Default 50.0 mm/s."""
+        return self._qs.value("manual/jog_rapid_velocity_mm_s", 50.0, type=float)
+
+    @jog_rapid_velocity_mm_s.setter
+    def jog_rapid_velocity_mm_s(self, v: float) -> None:
+        self._qs.setValue("manual/jog_rapid_velocity_mm_s", float(v))
+        self.jog_rapid_velocity_mm_s_changed.emit(float(v))
+
     # ── Tool magazine ────────────────────────────────────────────────────────
 
     @property
@@ -597,6 +641,23 @@ class AppSettings(QObject):
         v = max(1, int(v))
         self._qs.setValue("tools/pocket_count", v)
         self.tool_pocket_count_changed.emit(v)
+
+    @property
+    def toolcard_body_color(self) -> str:
+        """Name key from TOOLCARD_BODY_COLORS for a ToolCardWidget's
+        expanded body background. Default 'Card-Grau (Standard)' — chosen
+        to match the existing QFrame#Card grey, so an unconfigured install
+        looks exactly as before this setting existed."""
+        return self._qs.value("tools/toolcard_body_color", "Card-Grau (Standard)", type=str)
+
+    @toolcard_body_color.setter
+    def toolcard_body_color(self, name: str) -> None:
+        self._qs.setValue("tools/toolcard_body_color", name)
+        self.toolcard_body_color_changed.emit(name)
+
+    def toolcard_body_color_rgb(self) -> tuple[float, float, float]:
+        """Current ToolCard expanded-body colour as (r, g, b) floats 0-1."""
+        return self.TOOLCARD_BODY_COLORS.get(self.toolcard_body_color, (0.16, 0.16, 0.16))
 
     # ── Machine axis configuration ──────────────────────────────────────────
 

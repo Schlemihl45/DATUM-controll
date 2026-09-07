@@ -103,14 +103,14 @@ class _GCodeNoFileWidget(Card):
         inner.setAlignment(Qt.AlignCenter)
 
         icon_lbl = QLabel()
-        icon_lbl.setPixmap(get_icon("workpieces", size=QSize(64, 64)).pixmap(64, 64))
+        icon_lbl.setPixmap(get_icon("workpieces", tint=True, size=QSize(64, 64)).pixmap(64, 64))
         icon_lbl.setAlignment(Qt.AlignCenter)
 
         hint = QLabel("Kein Programm geladen")
         hint.setObjectName("CardTitle")
         hint.setAlignment(Qt.AlignCenter)
 
-        open_btn = CardButton("Datei laden", icon=get_icon("workpieces"), icon_size=36)
+        open_btn = CardButton("Datei laden", icon=get_icon("workpieces", tint=True), icon_size=36)
         open_btn.setFixedSize(140, 52)
         open_btn.clicked.connect(self.open_clicked)
 

@@ -27,7 +27,8 @@ class _OverrideSlider(QWidget):
         icon.setObjectName("OverrideLabel")
         icon.setFixedSize(_ICON_SIZE, _ICON_SIZE)
         icon.setPixmap(
-            get_icon(icon_name, size=QSize(_ICON_SIZE, _ICON_SIZE)).pixmap(_ICON_SIZE, _ICON_SIZE)
+            get_icon(icon_name, tint=True, size=QSize(_ICON_SIZE, _ICON_SIZE))
+            .pixmap(_ICON_SIZE, _ICON_SIZE)
         )
 
         self._value_label = QLabel("100%")
