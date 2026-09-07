@@ -125,24 +125,27 @@ def get_icon(
     label: str,
     color: QColor | None = None,
     size: QSize | None = None,
-    tint: bool = False,
+    tint: bool = True,
     qss_path: Path | None = None,
     selector: str = "QLabel#CardButtonIcon",
 ) -> QIcon:
     """
     Load an icon by button label.
 
-    tint=False: native QIcon(path) — Qt's SVG icon engine handles
-    scaling/DPI automatically on every repaint.
-    tint=True: manually re-rendered and flat-colored (needs a fixed
-    size, since the result is a baked pixmap, not a live vector icon).
-    An explicit *color* wins outright; otherwise the tint color is read
-    from *qss_path* (or the app's currently active theme file — see
+    tint=True (default): manually re-rendered and flat-colored (needs a
+    fixed size, since the result is a baked pixmap, not a live vector
+    icon). An explicit *color* wins outright; otherwise the tint color is
+    read from *qss_path* (or the app's currently active theme file — see
     set_active_theme_path()) via extract_color_from_qss(), using
     *selector* to pick which rule's `color` applies (e.g. the default
     QLabel#CardButtonIcon for dark quick-bar/nav buttons vs.
     QLabel#InfoIcon for the light info cards in machine_info_cards.py).
     Falls back to the hardcoded _ICON_COLOR if that lookup finds nothing.
+    tint=False: native QIcon(path) — Qt's SVG icon engine handles
+    scaling/DPI automatically on every repaint, original SVG colors kept
+    as-is. Pass this explicitly for genuinely multi-color/branded icons
+    (e.g. logo.svg) or icons whose own colors carry meaning that a flat
+    tint would destroy (e.g. the red/green/blue X/Y/Z axis icons).
     """
     path = _resolve_path(label)
     if path is None:
@@ -196,7 +199,7 @@ def get_icon_pixmap(
     label: str,
     size: QSize | None = None,
     color: QColor | None = None,
-    tint: bool = False,
+    tint: bool = True,
     qss_path: Path | None = None,
     selector: str = "QLabel#CardButtonIcon",
 ) -> QPixmap:

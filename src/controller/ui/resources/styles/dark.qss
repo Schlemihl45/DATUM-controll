@@ -386,6 +386,26 @@ QPushButton#ToolFilterToggle:checked {
     color: #FFFFFF;
 }
 
+/* ManualPage's JogControlPanel (jog_control_panel.py): step-size button
+   (1/0.1/0.01 mm) currently active — same accent-blue "checked" look as
+   ToolFilterToggle above, for consistency. NONE checked = continuous jog,
+   so this is a plain toggle highlight, not a warning. */
+QPushButton#JogStepButton:checked {
+    background: rgba(76, 111, 224, 0.35);
+    border: 1px solid rgba(120, 155, 230, 0.6);
+    color: #FFFFFF;
+}
+
+/* ManualPage's JogControlPanel: Feed/Rapid toggle — Rapid active is a
+   distinct WARNING state (higher jog speed), reusing the same red as the
+   Stop control (QFrame#Card[variant="stop"] above) rather than the neutral
+   accent-blue toggle color used elsewhere. */
+QPushButton#RapidToggle:checked {
+    background: #E5484D;
+    border: 1px solid #791F1F;
+    color: #FFFFFF;
+}
+
 /* ToolPage: per-card "..." options-menu button (tool_card_widget.py's
    ToolCardWidget header) — plain QToolButton for the same reason (Card's
    margins don't fit a 36px inline icon button). No QToolButton rule

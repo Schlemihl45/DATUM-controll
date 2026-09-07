@@ -186,9 +186,20 @@ class ToolCardWidget(Card):
 
         # ── Body (built once; shown/hidden on expand/collapse) ─────────────────
         self._body = QWidget(self)
+        self._body.setObjectName("ToolCardBody")
         self._body.setVisible(False)
         self._build_body()
         self.content_layout.addWidget(self._body)
+
+        # Body background colour — user-configurable (Settings -> Tools ->
+        # Darstellung), independent of the header, which always keeps the
+        # plain QFrame#Card look. Set via inline stylesheet on self._body
+        # only (not QSS in dark.qss/light.qss), since the color is a
+        # runtime AppSettings value the static theme files can't read —
+        # same reasoning as sim_panel.py's _ColorSwatch._update_style().
+        self._settings = AppSettings.instance()
+        self._apply_body_color()
+        self._settings.toolcard_body_color_changed.connect(self._on_body_color_changed)
 
         self.set_tool(tool)
 
@@ -430,6 +441,16 @@ class ToolCardWidget(Card):
 
     def is_expanded(self) -> bool:
         return self._expanded
+
+    def _apply_body_color(self) -> None:
+        r, g, b = self._settings.toolcard_body_color_rgb()
+        hex_val = "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+        self._body.setStyleSheet(
+            f"QWidget#ToolCardBody {{ background: {hex_val}; border-radius: 8px; }}"
+        )
+
+    def _on_body_color_changed(self, _name: str) -> None:
+        self._apply_body_color()
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
