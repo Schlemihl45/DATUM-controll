@@ -1,6 +1,27 @@
 /* =========================================================
-   DATUM Control — global stylesheet
-   No dynamic theme system (removed) — single fixed look.
+   DATUM Control — Theme "Baseline" (verfeinerte Fassung)
+
+   Drei bewusste Abweichungen von dark.qss:
+
+   1. Signalkarten (Start/Stop/Feed-Hold) sind flach statt radial
+      verlaufend. Farbwerte selbst unverändert.
+
+   2. Die generische Karte (QFrame#Card ohne variant) — verwendet
+      von JEDEM Nav-Button, JEDEM Quick-Button (Licht, Kühlmittel,
+      Return) und jedem sonstigen CardButton — bleibt dunkelblau,
+      bekommt aber einen dezenteren, klarer erkennbar BLAUEN
+      Verlauf statt des vorherigen neutraleren Blaugrau-Verlaufs.
+      Bewusst NICHT weiß: helle Flächen sollen laut Vorgabe nur
+      gezielt, nicht großflächig eingesetzt werden — und Nav-/
+      Quick-Buttons decken zusammen einen großen Teil jeder Seite ab.
+
+   3. Neuer variant="info", ausschließlich für die drei Maschinen-
+      Info-Karten (AxisPositionCard/FeedrateCard/SpindleCard,
+      ui/widgets/machine_info_cards.py) — hell, als gezielter
+      Akzent, nicht als flächendeckende Änderung. Dafür muss
+      machine_info_cards.py diesen variant per setProperty(...)
+      setzen (siehe begleitender Claude-Code-Prompt) — die reine
+      QSS-Regel allein greift nicht ohne diese Code-Änderung.
    ========================================================= */
 
 QMainWindow {
@@ -103,15 +124,28 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: transparent;
 }
 
-/* --- Card (ui/widgets/card.py) --- */
+/* --- Card (ui/widgets/card.py) ---
+   Basis für ALLE Nav-Buttons, Quick-Buttons und generischen
+   Cards. Bewusst klar blau statt neutral-grau, Verlauf dezenter
+   (kleinerer Helligkeits-Delta zwischen den Stops) als zuvor. */
 QFrame#Card {
     background: qradialgradient(
         cx: 0.15, cy: 0.1, radius: 1.1,
         fx: 0.15, fy: 0.1,
-        stop: 0 rgba(45, 55, 72, 255),
-        stop: 1 rgba(35, 42, 53, 255)
+        stop: 0 rgba(36, 52, 74, 255),
+        stop: 1 rgba(26, 37, 54, 255)
     );
     border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+}
+
+/* Info-Karten (AxisPositionCard/FeedrateCard/SpindleCard) — gezielter
+   heller Akzent, NICHT die generische Card-Regel. Muss von
+   machine_info_cards.py per setProperty("variant", "info") gesetzt
+   werden, sonst greift diese Regel nicht (siehe Prompt). */
+QFrame#Card[variant="info"] {
+    background: #DCE3EA;
+    border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: 6px;
 }
 
@@ -130,7 +164,7 @@ QLabel#CardButtonLabel {
 }
 
 QLabel#CardButtonIcon {
-    color: #D6D6D6;
+    color: #8fa0ba;
 }
 
 /* kleinere Variante für die QuickToolBar unten */
@@ -165,31 +199,38 @@ QLabel#StatusBarClock {
 }
 
 QWidget#machine_info_panel{
-    background-color: green;
+    background-color: transparent;
 }
 
+/* Auf der jetzt hellen Info-Karte: dunkle statt helle Schrift/Icons. */
+QLabel#InfoIcon {
+    color: #4A6D8C;
+}
 QLabel#InfoAxisLetter{
     font-size: 24px;
-    color: #8CA9C7;
+    color: #4A6D8C;
 }
 QLabel#InfoValue{
     font-size: 32px;
     font-weight: bold;
     font-family: "Helvetica", monospace;
+    color: #16202C;
 }
 QLabel#InfoUnit{
     font-size: 12px;
-    color: #8CA9C7;
+    color: #4A6D8C;
 }
 
 QFrame#InfoDivider {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-    stop:0 rgba(110, 155, 205, 0),
-    stop:0.5 rgba(110, 155, 205, 55),
-    stop:1 rgba(110, 155, 205, 0));
+    stop:0 rgba(20, 40, 60, 0),
+    stop:0.5 rgba(20, 40, 60, 140),
+    stop:1 rgba(20, 40, 60, 0));
     border-radius: 1px;
 }
 
+/* Signalkarte "Start" — flach statt radialem Verlauf, Farbwert
+   unverändert (heller der beiden bisherigen Verlaufs-Stops). */
 QFrame#Card[variant="start"] {
     background: #639922;
 }
@@ -199,8 +240,10 @@ QFrame#Card[variant="start"]:disabled {
     border: 1px solid rgba(255, 255, 255, 8%);
 }
 
+/* Signalkarte "Stop" — flach statt radialem Verlauf, Farbwert
+   unverändert (heller der beiden bisherigen Verlaufs-Stops). */
 QFrame#Card[variant="stop"] {
-    background: #FFA500;
+    background: #E5484D;
 }
 
 QFrame#Card[variant="stop"]:disabled {
@@ -208,8 +251,8 @@ QFrame#Card[variant="stop"]:disabled {
     border: 1px solid rgba(255, 255, 255, 8%);
 }
 
-QFrame#Card[variant="reset"]:disabled {
-    background: #2A2E36;
+QFrame#Card[variant="reset"]{
+    background: "orange";
     border: 1px solid rgba(255, 255, 255, 8%);
 }
 
@@ -236,20 +279,19 @@ QFrame#Card[variant="single_block"][checked="true"] {
     border: 1px solid rgba(120, 155, 230, 0.5);
 }
 
-/* Feed Hold — app-wide quick bar (main_window.py). Red as the default
-   state, grey once engaged — this bar has no separate Stop button, so
-   Feed Hold carries Stop's red warning color itself rather than the amber
-   used elsewhere for "engaged" toggles. */
+/* Feed Hold — app-wide quick bar (main_window.py). Dieselbe Rot-Signalfarbe
+   wie die Stop-Karte, deshalb hier ebenfalls flach statt radial verlaufend,
+   damit beide "Stop"-artigen Bedienelemente konsistent aussehen. Grau-
+   Zustand (engaged) bleibt unverändert ein Verlauf, da das kein Signalton
+   ist, sondern ein neutraler "aktiv"-Zustand. */
 QFrame#Card[variant="feed_hold"] {
-    background: #FFA500;
+    background: #E5484D;
 }
-
 
 QFrame#Card[variant="feed_hold"]:disabled {
     background: #2A2E36;
     border: 1px solid rgba(255, 255, 255, 8%);
 }
-
 
 QPlainTextEdit#GCodeView {
     background: qlineargradient(
@@ -368,36 +410,6 @@ QPushButton#ToolFilterToggle:checked {
     color: #FFFFFF;
 }
 
-/* ManualPage's JogControlPanel (jog_control_panel.py): step-size button
-   (1/0.1/0.01 mm) currently active — same accent-blue "checked" look as
-   ToolFilterToggle above, for consistency. NONE checked = continuous jog,
-   so this is a plain toggle highlight, not a warning. */
-QPushButton[variant="jog_step"]:checked {
-    background: rgba(76, 111, 224, 0.35);
-    border: 1px solid rgba(120, 155, 230, 0.6);
-    color: #FFFFFF;
-}
-
-QFrame#Card[variant="jog_matrix_btn"][pressed="true"]{
-    background: qradialgradient(
-        cx: 0.15, cy: 0.1, radius: 1.1,
-        fx: 0.15, fy: 0.1,
-        stop: 0 #4A5568,
-        stop: 1 #1F2733
-    );
-    border:1px solid rgba(120, 155, 230, 0.6);
-}
-
-/* ManualPage's JogControlPanel: Feed/Rapid toggle — Rapid active is a
-   distinct WARNING state (higher jog speed), reusing the same red as the
-   Stop control (QFrame#Card[variant="stop"] above) rather than the neutral
-   accent-blue toggle color used elsewhere. */
-QFrame#Card[variant="rapid_toggle"][checked="true"] {
-    background: #C97A1E;
-    border: 1px solid rgba(230, 165, 90, 0.55);
-}
-
-
 /* ToolPage: per-card "..." options-menu button (tool_card_widget.py's
    ToolCardWidget header) — plain QToolButton for the same reason (Card's
    margins don't fit a 36px inline icon button). No QToolButton rule
@@ -498,101 +510,6 @@ QFrame#Card[expanded="true"] {
     border: 1px solid rgba(120, 155, 230, 0.55);
 }
 
-/* ToolPage: ToolCardWidget's expanded body (tool_card_widget.py's
-   self._body) — a light "paper" panel below the always-dark header, full
-   card width (see that widget's __init__ comment on zeroing Card's own
-   16px outer margin). Only the BOTTOM two corners are rounded, matching
-   QFrame#Card's own 6px radius exactly, so the flush, zero-margin body
-   reads as the bottom half of ONE rounded rectangle rather than a second
-   box; the top edge is square where it meets the header. The gradient's
-   first stop is close to QFrame#Card's own bottom gradient stop
-   (rgba(35,42,53)) so the header/body seam blends over a few pixels
-   instead of cutting hard. */
-QWidget#ToolCardBody {
-    background: qlineargradient(
-        x1: 0, y1: 0, x2: 0, y2: 1,
-        stop: 0 #d6d8da,
-        stop: 1 #abacae
-    );
-    border-top-left-radius: 0px;
-    border-top-right-radius: 0px;
-    border-bottom-left-radius: 6px;
-    border-bottom-right-radius: 6px;
-}
-
-/* Everything inside the light body reads dark-on-light, independent of
-   the app's own dark theme — this panel is deliberately its own fixed
-   "paper" look, not a themed surface. Scoped to #ToolCardBody so none of
-   these override the same widget types used elsewhere (e.g. the header's
-   own collapsed info grid, other Cards' QComboBox/QLineEdit). */
-QWidget#ToolCardBody QLabel {
-    color: #2A2E36;
-}
-
-QWidget#ToolCardBody QLabel#CardTitle {
-    color: #5A6472;
-}
-
-QWidget#ToolCardBody QLabel#ParamUnitLabel {
-    color: rgba(0, 0, 0, 0.45);
-}
-
-QWidget#ToolCardBody QFrame#ParamSeparator {
-    background-color: rgba(0, 0, 0, 0.12);
-}
-
-QWidget#ToolCardBody QLineEdit,
-QWidget#ToolCardBody QPlainTextEdit {
-    background: rgba(255, 255, 255, 0.65);
-    border: 1px solid rgba(0, 0, 0, 0.18);
-    border-radius: 4px;
-    padding: 2px 6px;
-    color: #2A2E36;
-}
-
-QWidget#ToolCardBody QComboBox {
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(0, 0, 0, 0.18);
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: #2A2E36;
-}
-
-/* ui/widgets/tool_usage_card.py's ToolUsageCard (shared by
-   WorkpieceDetailPage's aggregated tool list and ProgramDetailPage's own)
-   toggles this "variant" to "in_magazine" whenever ToolDatabaseSignals
-   says the tool currently sits in a magazine pocket. Deliberately the
-   EXACT same colours as [variant="start"] below (not a new green) — same
-   meaning reused on purpose. Absence of this variant is the card's
-   NORMAL look, not a warning state — no separate "not in magazine" colour. */
-QFrame#Card[variant="in_magazine"] {
-    background: qradialgradient(
-        cx: 0.15, cy: 0.1, radius: 1.1,
-        fx: 0.15, fy: 0.1,
-        stop: 0 #639922,
-        stop: 1 #27500A
-    );
-}
-
-/* WorkpieceDetailPage: an operation card whose G-code file is missing on
-   disk (see domain.models.Operation.file_missing) — must never look like
-   a normal card, so a visible amber warning border, same color as the
-   status bar's own warning severity. */
-QFrame#Card[file_missing="true"] {
-    border: 1px solid rgba(255, 176, 32, 0.7);
-}
-
-/* ProgramDetailPage: banner shown when viewing a superseded (is_current
-   == False) operation version, reached via the version-history list. */
-QLabel#DeprecatedBanner {
-    background: rgba(255, 176, 32, 0.18);
-    color: #FFB020;
-    border: 1px solid rgba(255, 176, 32, 0.5);
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-weight: 600;
-}
-
 QLabel#ToolCardTitle {
     font-family: "Helvetica";
     font-size: 12px;
@@ -607,24 +524,19 @@ QLabel#ToolCardButtonLabel {
     font-weight: bold;
 }
 
-/* Workpiece/Operation/History cards (ui/pages/workpiece_browser_page.py,
-   workpiece_detail_page.py, program_detail_page.py): the NAME is the
-   primary, most prominent line — big and bold — while dates/other info
-   sit below it, small and NOT bold. Deliberately their own pair of
-   classes rather than reusing CardTitle/ToolCardButtonLabel above: those
-   are the opposite emphasis (small caption vs. big bold value) for a
-   different widget family, and reusing them backwards here is exactly
-   the "inverted" look this pair replaces. */
-QLabel#WorkpieceCardName {
-    font-family: "Helvetica";
-    font-size: 17px;
-    font-weight: 700;
-    color: #E7EBF0;
+QFrame#ExpandedSection {
+    background-color: #FFFFFF;
 }
 
-QLabel#WorkpieceCardInfo {
-    font-family: "Helvetica";
-    font-size: 11px;
-    font-weight: 400;
-    color: #8CA9C7;
+/* Damit die Eingabefelder und Labels im weißen Bereich lesbar bleiben */
+QFrame#ExpandedSection QLineEdit,
+QFrame#ExpandedSection QComboBox,
+QFrame#ExpandedSection QPlainTextEdit {
+    color: #333333;
+    background-color: #F8F9FA;
+    border: 1px solid #CED4DA;
+}
+
+QFrame#ExpandedSection QLabel {
+    color: #333333;
 }

@@ -63,20 +63,25 @@ class ManualPage(QWidget):
         content = QWidget()
         col = QVBoxLayout(content)
         col.setContentsMargins(10, 10, 10, 10)
-        col.setSpacing(10)
+        col.setSpacing(12)
 
         self._jog_panel = JogControlPanel(self._controller, self._settings)
         self._function_panel = ManualFunctionPanel(self._controller)
-        col.addWidget(self._jog_panel)
-        col.addWidget(self._function_panel)
+
+        # NUR MDI/Touch-off scrollen — Jog/Homing/Spindel bleiben fest, sonst
+        # genau der Touch-vs-Scroll-Konflikt, den QScroller hier erzeugt.
         col.addWidget(self._build_mdi_card())
         col.addWidget(self._build_touch_off_card())
         col.addStretch(1)
 
         scroll.setWidget(content)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(scroll)
+        root.setSpacing(12)
+        root.addWidget(self._jog_panel)
+        root.addWidget(self._function_panel)
+        root.addWidget(scroll, stretch=1)
 
         self._controller.machine_state_changed.connect(lambda _s: self._refresh_guards())
         self._controller.homed_changed.connect(lambda _h: self._refresh_guards())

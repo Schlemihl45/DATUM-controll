@@ -31,13 +31,13 @@ class GCodeHighlighter(QSyntaxHighlighter):
                 fmt.setFontWeight(QFont.Weight.DemiBold)
             return fmt
 
-        self._fmt_rapid = make_fmt("#C97064")           # G0
-        self._fmt_linear = make_fmt("#5FA8E0")           # G1
-        self._fmt_arc = make_fmt("#4FBF9E")              # G2/G3
-        self._fmt_g_other = make_fmt("#8fa0ba")          # restliche G-Codes
-        self._fmt_m = make_fmt("#9B8FD9")                # M-Codes
-        self._fmt_t = make_fmt("#D97B3F", bold=True)     # T-Codes
-        self._fmt_comment = make_fmt("#5f6b7a", italic=True)
+        self._fmt_rapid = make_fmt("#FF5C5C", bold=True)  # G0 — Kräftiges Alarm-Rot für Eilgang
+        self._fmt_linear = make_fmt("#3EA6FF",bold=True  )  # G1 — Leuchtendes Hellblau für lineare Bewegungen
+        self._fmt_arc = make_fmt("#2EE59D",bold=True)  # G2/G3 — Knalliges Mintgrün für Kreisbögen
+        self._fmt_g_other = make_fmt("#B2BEC3", bold=True)  # restliche G-Codes — Klares, helles Grau-Blau
+        self._fmt_m = make_fmt("#A29BFE", bold=True)  # M-Codes — Modernes, kräftiges Violett
+        self._fmt_t = make_fmt("#FF9F43", bold=True)  # T-Codes — Lebendiges, auffälliges Orange
+        self._fmt_comment = make_fmt("#718093", italic=True)  # Kommentare — Angenehm lesbares Mittelgrau
 
     def highlightBlock(self, text: str) -> None:
         it = self._CODE_RE.globalMatch(text)

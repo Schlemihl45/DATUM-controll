@@ -10,6 +10,28 @@ Layout (three columns in one QHBoxLayout — see the approved plan):
      center = a Feed/Rapid toggle button.
   3. Z column: Z+/Z- buttons, vertically centered against the matrix.
 
+Every button is built explicitly, one at a time — no loop/dict-driven
+generation. Every button except the three step-size buttons carries its
+own dedicated icon (no shared axis icon + "+"/"-" text overlay anymore);
+step buttons stay text-only ("1 mm" etc.), per explicit request.
+
+CardButton is used throughout instead of QPushButton, for the same visual
+language as the rest of the app (Card/CardButton). This required CardButton
+to gain pressed/released signals (see card_button.py's updated docstring)
+— QFrame has neither built in, and the old QPushButton-based version relied
+on exactly those two events for hold-to-jog behavior. Do not swap the
+movement buttons for a widget that only offers `clicked`: `clicked` fires
+on press with no matching release event, so jog_stop() would never be
+called and an axis could jog indefinitely.
+
+Icon assets assumed but not yet confirmed to exist — create/rename as
+needed: "jog-x-plus"/"jog-x-minus"/"jog-y-plus"/"jog-y-minus" (axis-colored,
+tint=False, same convention as the old x/y/z-coordinate icons — direction
+now baked into the icon itself instead of a separate "+"/"-" label),
+"jog-z-plus"/"jog-z-minus" (same), "jog-diagonal-ne"/"jog-diagonal-nw"/
+"jog-diagonal-se"/"jog-diagonal-sw" (generic, tinted — a diagonal mixes two
+axis colors, so no single axis color applies), "rapid" (generic, tinted).
+
 Controller-injected (not signal-based) — consistent with the existing
 manual_page.py/override_panel.py convention in this module cluster: this
 widget calls MachineController directly rather than emitting its own
@@ -37,37 +59,16 @@ Step mode vs. continuous mode:
 from __future__ import annotations
 
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget, QPushButton
 
 from controller.core.machine.controller import MachineController
 from controller.sim.core.settings import AppSettings
 from controller.ui.icon_loader import get_icon
+from controller.ui.widgets.card_button import CardButton
 
-_STEP_SIZES_MM = [1.0, 0.1, 0.01]
-_AXIS_ICON = {0: "x-coordinate", 1: "y-coordinate", 2: "z-coordinate"}
-_ICON_SIZE = QSize(20, 20)
-_BTN_SIZE = QSize(56, 56)
-
-# Diagonal corner label, keyed by (sign_x, sign_y) — no dedicated diagonal
-# icon asset exists, so these stay plain arrow glyphs (see module docstring
-# on why the edge buttons DO get axis icons but corners don't).
-_DIAGONAL_LABELS: dict[tuple[int, int], str] = {
-    (1, 1): "↗", (1, -1): "↘", (-1, 1): "↖", (-1, -1): "↙",
-}
-
-
-def _axis_button(axis: int, sign: int) -> QPushButton:
-    """Direction button for one axis (X/Y/Z, +/-): axis-colored icon
-    (tint=False — preserves the existing red/green/blue X/Y/Z coding on
-    x/y/z-coordinate.svg; see icon_loader.get_icon()'s own docstring on
-    when NOT to tint) plus a plain "+"/"-" label, since no separate
-    plus/minus icon asset exists per axis."""
-    btn = QPushButton("+" if sign > 0 else "−")
-    btn.setIcon(get_icon(_AXIS_ICON[axis], tint=False, size=_ICON_SIZE))
-    btn.setIconSize(_ICON_SIZE)
-    btn.setFixedSize(_BTN_SIZE)
-    btn.setAutoRepeat(False)
-    return btn
+_ICON_SIZE = QSize(64, 64)
+_BTN_SIZE = QSize(124, 124)
+_STEP_BTN_SIZE = QSize(64, 64)
 
 
 class JogControlPanel(QWidget):
@@ -83,42 +84,70 @@ class JogControlPanel(QWidget):
         self._controller = controller
         self._settings = settings
         self._active_step: float | None = None
-        self._movement_buttons: list[QPushButton] = []
+        self._movement_buttons: list[CardButton] = []
         self._step_buttons: dict[QPushButton, float] = {}
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(20)
 
-        root.addLayout(self._build_step_column())
-        root.addLayout(self._build_matrix())
-        root.addLayout(self._build_z_column())
+        # Linke Seite
+        left_layout = QHBoxLayout()
+        left_layout.addStretch(1)
+        left_layout.addLayout(self._build_step_column())
 
-    # ── Step column (left) ──────────────────────────────────────────────────
+        # Rechte Seite
+        right_layout = QHBoxLayout()
+        right_layout.addLayout(self._build_z_column())
+        right_layout.addStretch(1)
+
+        # Zusammenfügen mit der Matrix in der exakten Mitte
+        root.addLayout(left_layout, 1)
+        root.addLayout(self._build_matrix(), 0)  # Matrix in der Mitte ohne flexiblen Stretch
+        root.addLayout(right_layout, 1)
+
+    # ── Step column (left) — text-only, no icons, per explicit request ─────
 
     def _build_step_column(self) -> QVBoxLayout:
         col = QVBoxLayout()
         col.setSpacing(6)
-        hdr = QLabel("Schrittweite")
-        hdr.setObjectName("CardTitle")
-        col.addWidget(hdr)
+        col.addStretch(1)
 
-        for mm in _STEP_SIZES_MM:
-            btn = QPushButton(f"{mm:g} mm")
-            btn.setObjectName("JogStepButton")
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, b=btn: self._on_step_clicked(b, checked))
-            self._step_buttons[btn] = mm
-            col.addWidget(btn)
+        step_1 = QPushButton("1 mm")
+        step_1.setFixedSize(_STEP_BTN_SIZE)
+        step_1.setProperty("variant", "jog_step")
+        step_1.setCheckable(True)
+        step_1.clicked.connect(lambda: self._on_step_clicked(step_1))
+        self._step_buttons[step_1] = 1.0
+        col.addWidget(step_1)
+
+        step_01 = QPushButton("0.1 mm")
+        step_01.setFixedSize(_STEP_BTN_SIZE)
+        step_01.setProperty("variant", "jog_step")
+        step_01.setCheckable(True)
+        step_01.clicked.connect(lambda: self._on_step_clicked(step_01))
+        self._step_buttons[step_01] = 0.1
+        col.addWidget(step_01)
+
+        step_001 = QPushButton("0.01 mm")
+        step_001.setFixedSize(_STEP_BTN_SIZE)
+        step_001.setProperty("variant", "jog_step")
+        step_001.setCheckable(True)
+        step_001.clicked.connect(lambda: self._on_step_clicked(step_001))
+        self._step_buttons[step_001] = 0.01
+        col.addWidget(step_001)
+
         col.addStretch(1)
         return col
 
-    def _on_step_clicked(self, button: QPushButton, checked: bool) -> None:
+    def _on_step_clicked(self, button: QPushButton) -> None:
         # Manual mutual exclusion (not QButtonGroup(exclusive=True)):
         # re-clicking the already-active button must be able to switch BACK
         # to continuous mode, which an exclusive QButtonGroup can't do (it
-        # always keeps exactly one button checked).
-        if checked:
+        # always keeps exactly one button checked). CardButton.toggle()
+        # already ran (see mousePressEvent) by the time this fires, so
+        # button.isChecked() reflects the NEW state here.
+        if button.isChecked():
             for other in self._step_buttons:
                 if other is not button:
                     other.setChecked(False)
@@ -126,80 +155,106 @@ class JogControlPanel(QWidget):
         else:
             self._active_step = None
 
-    # ── 3x3 X/Y matrix (center) ─────────────────────────────────────────────
+    # ── 3x3 X/Y matrix (center) — every position built explicitly ──────────
 
     def _build_matrix(self) -> QVBoxLayout:
         col = QVBoxLayout()
         col.setSpacing(6)
-        hdr = QLabel("X / Y")
-        hdr.setObjectName("CardTitle")
-        col.addWidget(hdr)
 
         grid = QGridLayout()
-        grid.setSpacing(4)
+        grid.setSpacing(12)
 
-        # (row, col) -> [(axis, sign), ...] — one entry for an edge, two for
-        # a diagonal corner. Conventional CNC jog-pad layout: Y+ top-middle,
-        # X-/X+ left/right, Y- bottom-middle, diagonals in the corners.
-        positions: dict[tuple[int, int], list[tuple[int, float]]] = {
-            (0, 0): [(0, -1.0), (1, 1.0)],
-            (0, 1): [(1, 1.0)],
-            (0, 2): [(0, 1.0), (1, 1.0)],
-            (1, 0): [(0, -1.0)],
-            (1, 2): [(0, 1.0)],
-            (2, 0): [(0, -1.0), (1, -1.0)],
-            (2, 1): [(1, -1.0)],
-            (2, 2): [(0, 1.0), (1, -1.0)],
-        }
-        for (row, grid_col), axes in positions.items():
-            if len(axes) == 1:
-                axis, sign = axes[0]
-                btn = _axis_button(axis, int(sign))
-            else:
-                signs = (int(axes[0][1]), int(axes[1][1]))
-                btn = QPushButton(_DIAGONAL_LABELS[signs])
-                btn.setFixedSize(_BTN_SIZE)
-                btn.setAutoRepeat(False)
-            btn.pressed.connect(lambda a=axes: self._on_jog_press(a))
-            btn.released.connect(lambda a=axes: self._on_jog_release(a))
-            self._movement_buttons.append(btn)
-            grid.addWidget(btn, row, grid_col)
 
-        self._rapid_btn = QPushButton("Rapid")
-        self._rapid_btn.setObjectName("RapidToggle")
+        nw_btn = CardButton(icon=get_icon("arrow_tl", tint=True, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        nw_btn.setFixedSize(_BTN_SIZE)
+        nw_btn.pressed.connect(lambda: self._on_jog_press([(0, -1.0), (1, 1.0)]))
+        nw_btn.released.connect(lambda: self._on_jog_release([(0, -1.0), (1, 1.0)]))
+        self._movement_buttons.append(nw_btn)
+        grid.addWidget(nw_btn, 0, 0)
+
+        y_plus_btn = CardButton(icon=get_icon("arrow_up", tint=False, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        y_plus_btn.setFixedSize(_BTN_SIZE)
+        y_plus_btn.pressed.connect(lambda: self._on_jog_press([(1, 1.0)]))
+        y_plus_btn.released.connect(lambda: self._on_jog_release([(1, 1.0)]))
+        self._movement_buttons.append(y_plus_btn)
+        grid.addWidget(y_plus_btn, 0, 1)
+
+        ne_btn = CardButton(icon=get_icon("arrow_tr", tint=True, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        ne_btn.setFixedSize(_BTN_SIZE)
+        ne_btn.pressed.connect(lambda: self._on_jog_press([(0, 1.0), (1, 1.0)]))
+        ne_btn.released.connect(lambda: self._on_jog_release([(0, 1.0), (1, 1.0)]))
+        self._movement_buttons.append(ne_btn)
+        grid.addWidget(ne_btn, 0, 2)
+
+        x_minus_btn = CardButton(icon=get_icon("arrow_left", tint=False, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        x_minus_btn.setFixedSize(_BTN_SIZE)
+        x_minus_btn.pressed.connect(lambda: self._on_jog_press([(0, -1.0)]))
+        x_minus_btn.released.connect(lambda: self._on_jog_release([(0, -1.0)]))
+        self._movement_buttons.append(x_minus_btn)
+        grid.addWidget(x_minus_btn, 1, 0)
+
+        self._rapid_btn = CardButton("Rapid", icon=get_icon("rapid", tint=True, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        self._rapid_btn.setProperty("variant", "rapid_toggle")
         self._rapid_btn.setCheckable(True)
         self._rapid_btn.setFixedSize(_BTN_SIZE)
-        self._rapid_btn.setToolTip(
-            "Eilgang (Rapid) für Jog aktivieren/deaktivieren — betrifft nur "
-            "die Jog-Geschwindigkeit (siehe Einstellungen -> Manuell), kein "
-            "eigener Maschinen-Modus (das Backend kennt keinen separaten "
-            "Rapid-Jog)."
-        )
+        self._rapid_btn.clicked.connect(lambda: self._on_rapid_clicked())
         grid.addWidget(self._rapid_btn, 1, 1)
+
+        x_plus_btn = CardButton(icon=get_icon("arrow_right", tint=False, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        x_plus_btn.setFixedSize(_BTN_SIZE)
+        x_plus_btn.pressed.connect(lambda: self._on_jog_press([(0, 1.0)]))
+        x_plus_btn.released.connect(lambda: self._on_jog_release([(0, 1.0)]))
+        self._movement_buttons.append(x_plus_btn)
+        grid.addWidget(x_plus_btn, 1, 2)
+
+        sw_btn = CardButton(icon=get_icon("arrow_bl", tint=True, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        sw_btn.setFixedSize(_BTN_SIZE)
+        sw_btn.pressed.connect(lambda: self._on_jog_press([(0, -1.0), (1, -1.0)]))
+        sw_btn.released.connect(lambda: self._on_jog_release([(0, -1.0), (1, -1.0)]))
+        self._movement_buttons.append(sw_btn)
+        grid.addWidget(sw_btn, 2, 0)
+
+        y_minus_btn = CardButton(icon=get_icon("arrow_down", tint=False, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        y_minus_btn.setFixedSize(_BTN_SIZE)
+        y_minus_btn.pressed.connect(lambda: self._on_jog_press([(1, -1.0)]))
+        y_minus_btn.released.connect(lambda: self._on_jog_release([(1, -1.0)]))
+        self._movement_buttons.append(y_minus_btn)
+        grid.addWidget(y_minus_btn, 2, 1)
+
+        se_btn = CardButton(icon=get_icon("arrow_br", tint=True, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        se_btn.setFixedSize(_BTN_SIZE)
+        se_btn.pressed.connect(lambda: self._on_jog_press([(0, 1.0), (1, -1.0)]))
+        se_btn.released.connect(lambda: self._on_jog_release([(0, 1.0), (1, -1.0)]))
+        self._movement_buttons.append(se_btn)
+        grid.addWidget(se_btn, 2, 2)
+
+        for btn in [x_plus_btn, x_minus_btn, y_plus_btn, y_minus_btn, ne_btn, nw_btn, se_btn, sw_btn]:
+            btn.setProperty("variant", "jog_matrix_btn")
 
         col.addLayout(grid)
         col.addStretch(1)
         return col
 
-    # ── Z column (right) ────────────────────────────────────────────────────
+    # ── Z column (right) — built explicitly, each with its own icon ────────
 
     def _build_z_column(self) -> QVBoxLayout:
         col = QVBoxLayout()
         col.setSpacing(6)
-        hdr = QLabel("Z")
-        hdr.setObjectName("CardTitle")
-        col.addWidget(hdr)
         col.addStretch(1)
 
-        z_plus = _axis_button(2, 1)
+        z_plus = CardButton(icon=get_icon("arrow_up", tint=False, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        z_plus.setFixedSize(_BTN_SIZE)
         z_plus.pressed.connect(lambda: self._on_jog_press([(2, 1.0)]))
         z_plus.released.connect(lambda: self._on_jog_release([(2, 1.0)]))
+        z_plus.setProperty("variant", "jog_matrix_btn")
         self._movement_buttons.append(z_plus)
         col.addWidget(z_plus)
 
-        z_minus = _axis_button(2, -1)
+        z_minus = CardButton(icon=get_icon("arrow_down", tint=False, size=_ICON_SIZE), icon_size=_ICON_SIZE)
+        z_minus.setFixedSize(_BTN_SIZE)
         z_minus.pressed.connect(lambda: self._on_jog_press([(2, -1.0)]))
         z_minus.released.connect(lambda: self._on_jog_release([(2, -1.0)]))
+        z_minus.setProperty("variant", "jog_matrix_btn")
         self._movement_buttons.append(z_minus)
         col.addWidget(z_minus)
 
@@ -209,6 +264,7 @@ class JogControlPanel(QWidget):
     # ── Jog press/release — see module docstring for step vs. continuous ──
 
     def _on_jog_press(self, axes: list[tuple[int, float]]) -> None:
+        print(axes)
         velocity = (
             self._settings.jog_rapid_velocity_mm_s if self._rapid_btn.isChecked()
             else self._settings.jog_feed_velocity_mm_s
@@ -229,6 +285,11 @@ class JogControlPanel(QWidget):
         for axis, _sign in axes:
             self._controller.jog_stop(axis)
 
+    def _on_rapid_clicked(self):
+        if self._rapid_btn.isChecked():
+            self._rapid_btn.set_icon(get_icon("feedrate_iso", tint=False, size=_ICON_SIZE))
+        else:
+            self._rapid_btn.set_icon(get_icon("rapid", tint=False, size=_ICON_SIZE))
     # ── Guards ───────────────────────────────────────────────────────────────
 
     def refresh_guards(self, can_jog: bool) -> None:

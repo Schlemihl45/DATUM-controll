@@ -42,7 +42,7 @@ _DEFAULT_SIZE = QSize(64, 64)
 # run at all (the very first icons loaded during app construction, before
 # apply_theme() has had a chance to call set_active_theme_path() — see
 # that function's docstring and ThemeManager.apply_theme()).
-_DEFAULT_QSS_PATH = _STYLES_DIR / "dark.qss"
+_DEFAULT_QSS_PATH = _STYLES_DIR / "baseline.qss"
 _active_qss_path: Path = _DEFAULT_QSS_PATH
 
 

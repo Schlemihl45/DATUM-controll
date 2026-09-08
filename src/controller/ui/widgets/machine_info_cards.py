@@ -44,7 +44,7 @@ GAP_ICON_TO_LETTER_PCT = 4
 GAP_LETTER_TO_VALUE_PCT = 14
 GAP_VALUE_TO_TOGO_PCT = 3
 GAP_TOGO_TO_UNIT_PCT = 2
-GAP_ROWS_PCT = 5          # vertikaler Abstand zwischen Zeilen
+GAP_ROWS_PCT = 12          # vertikaler Abstand zwischen Zeilen
 
 LETTER_WIDTH_PCT = 8
 VALUE_WIDTH_PCT = 26
@@ -129,7 +129,7 @@ def _build_value_row(
     icon_label.setFixedSize(icon_size)
     icon_label.setPixmap(
         get_icon(
-            icon_name, size=icon_size, tint=True, selector="QLabel#InfoIcon",
+            icon_name, size=icon_size, tint=False, selector="QLabel#InfoIcon",
         ).pixmap(icon_size)
     )
     row.add_widget(icon_label)
@@ -195,7 +195,7 @@ class FeedrateCard(_LiveValueCard):
         self.setProperty("variant", "info")
         self._controller = controller
 
-        row, self._feedrate_value = _build_value_row("spindle_moving", None, "[mm min⁻¹]")
+        row, self._feedrate_value = _build_value_row("spindle_moving", None, "[mm/min]")
         self.content_layout.addWidget(row)
 
         controller.feed_changed.connect(self._on_feed)
@@ -218,7 +218,7 @@ class SpindleCard(_LiveValueCard):
         self._load_bar = LoadBar(radius=12, parent=self)
         self._load_bar.lower()  # hinter den restlichen Inhalt legen
 
-        row, self._rpm_value = _build_value_row("spindle", None, "[min⁻¹]")
+        row, self._rpm_value = _build_value_row("spindle", None, "[1/min]")
         self.content_layout.addWidget(row)
 
         controller.feed_changed.connect(self._on_feed)
