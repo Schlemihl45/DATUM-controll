@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import replace
 
 from controller.core.backends.base import AbstractBackend
 from controller.domain.models import (
@@ -48,6 +49,12 @@ class SimulatedBackend(AbstractBackend):
         self._active_wcs: int = 1            # G54
         self._t0: float = time.monotonic()
 
+        # --- Continuous jog --- axis_index -> velocity mm/s (sign =
+        # direction), applied each poll() tick — see jog_continuous()'s
+        # docstring for why this dict exists at all.
+        self._active_jogs: dict[int, float] = {}
+        self._last_poll_time: float = time.monotonic()
+
         # --- Feed / speed ---
         self._feed_override: float = 1.0
         self._rapid_override: float = 1.0
@@ -91,8 +98,18 @@ class SimulatedBackend(AbstractBackend):
 
     def poll(self) -> None:
         """Advance simulation by one time step. Called every 50 ms."""
+        now = time.monotonic()
+        # dt tracked unconditionally (even while OFF/ESTOP) so a stale gap
+        # never produces one huge jump the next time poll() actually runs
+        # something with it — see _apply_continuous_jog()'s clamp below.
+        dt = now - self._last_poll_time
+        self._last_poll_time = now
+
         if self._machine_state != MachineState.ON:
             return
+
+        if self._active_jogs and self._program_state != ProgramState.RUNNING:
+            self._apply_continuous_jog(dt)
 
         t = time.monotonic() - self._t0
 
@@ -100,6 +117,22 @@ class SimulatedBackend(AbstractBackend):
             self._poll_running(t)
 
         self._poll_spindle()
+
+    def _apply_continuous_jog(self, dt: float) -> None:
+        """Advance self._position for every axis currently jogging
+        (jog_continuous()) by velocity * dt — the actual motion
+        jog_continuous() itself only registers, matching a real
+        controller's own jog loop advancing DRO position in real time
+        until JOG_STOP. dt is clamped to the expected ~50ms poll tick so
+        a delayed/late poll (e.g. right after set_machine_on()) can never
+        produce a sudden large jump."""
+        dt = min(dt, 0.2)
+        _ATTRS = ("x", "y", "z", "a", "b", "c")
+        for axis, velocity in self._active_jogs.items():
+            if 0 <= axis < len(_ATTRS):
+                attr = _ATTRS[axis]
+                delta = velocity * dt
+                setattr(self._position, attr, round(getattr(self._position, attr) + delta, 3))
 
     def _simulated_load(
         self, base: float, amplitude: float, freq: float, t: float, phase: float = 0.0
@@ -249,7 +282,20 @@ class SimulatedBackend(AbstractBackend):
     # ------------------------------------------------------------------
 
     def get_position(self) -> Position:
-        return self._position
+        # A COPY, not self._position itself: MachineController._check_position()
+        # stores whatever this returns as _last_position and later compares
+        # the NEXT get_position() against it to decide whether to emit
+        # position_changed. jog_increment()/_apply_continuous_jog() mutate
+        # self._position IN PLACE (setattr(self._position, attr, ...)) — if
+        # this returned the live object by reference, _last_position would
+        # silently alias that same mutating object, so the "changed?"
+        # comparison would always see two references to the identical
+        # already-mutated instance and never fire. That was the actual
+        # reason Jog buttons never moved MachinePage's axis display, in
+        # BOTH step and continuous mode (_poll_running() masked this for
+        # program playback only, since it reassigns self._position to a
+        # brand-new Position object each tick instead of mutating in place).
+        return replace(self._position)
 
     def get_active_wcs(self) -> int:
         return self._active_wcs
@@ -334,6 +380,7 @@ class SimulatedBackend(AbstractBackend):
         self._spindle_target_rpm = 0.0
         self._flood = False
         self._mist = False
+        self._active_jogs.clear()   # E-stop must halt any in-flight jog too
 
     def estop_reset(self) -> None:
         if self._machine_state == MachineState.ESTOP:
@@ -343,10 +390,16 @@ class SimulatedBackend(AbstractBackend):
         if self._machine_state == MachineState.ESTOP_RESET:
             self._machine_state = MachineState.ON
             self._t0 = time.monotonic()
+            # Avoid a huge dt spike on the first poll() after being OFF for
+            # a while feeding into _apply_continuous_jog() (no jog can
+            # actually be active yet at this point, but this keeps poll()'s
+            # dt bookkeeping honest regardless of how long ON was pending).
+            self._last_poll_time = time.monotonic()
 
     def set_machine_off(self) -> None:
         if self._machine_state == MachineState.ON:
             self._machine_state = MachineState.OFF
+            self._active_jogs.clear()
 
     # ------------------------------------------------------------------
     # Program commands
@@ -435,8 +488,13 @@ class SimulatedBackend(AbstractBackend):
     # ------------------------------------------------------------------
 
     def jog_continuous(self, axis: int, velocity: float) -> None:
-        # Phase 1: no continuous motion tracking — UI can render buttons
-        pass
+        """Start (or re-target) continuous jogging on *axis* — actual
+        motion happens in poll()'s _apply_continuous_jog(), ticking every
+        50ms exactly like a real controller's DRO would advance during a
+        JOG_CONTINUOUS move, so the UI's axis display moves smoothly
+        until jog_stop() is called. Previously a no-op stub, which is why
+        pressing a Jog button never moved the position display at all."""
+        self._active_jogs[axis] = velocity
 
     def jog_increment(self, axis: int, velocity: float, distance: float) -> None:
         """Shift position by a discrete step."""
@@ -447,7 +505,7 @@ class SimulatedBackend(AbstractBackend):
             setattr(self._position, attr, round(getattr(self._position, attr) + delta, 3))
 
     def jog_stop(self, axis: int) -> None:
-        pass  # No continuous jog in Phase 1
+        self._active_jogs.pop(axis, None)
 
     # ------------------------------------------------------------------
     # Homing
